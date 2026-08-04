@@ -253,7 +253,7 @@
             border-collapse: collapse;
             font-size: 14px;
             table-layout: fixed;
-            font-variant-numeric: tabular-nums; /* 確保數字、逗號及點號垂直精確對齊 */
+            font-variant-numeric: tabular-nums;
         }
 
         th, td {
@@ -271,7 +271,6 @@
             z-index: 10;
         }
 
-        /* 設定表格欄位對齊與寬度 (第 3 欄通脹調整係數改為 right) */
         th:nth-child(1), td:nth-child(1) { width: 18%; text-align: center; }
         th:nth-child(2), td:nth-child(2) { width: 20.5%; text-align: right; }
         th:nth-child(3), td:nth-child(3) { width: 18%; text-align: right; }
@@ -286,7 +285,6 @@
             background-color: #e2e8f0;
         }
 
-        /* Footer Disclaimer */
         footer {
             margin-top: 30px;
             padding: 20px;
@@ -303,51 +301,18 @@
         }
 
         @media (max-width: 768px) {
-            .kpi-grid {
-                grid-template-columns: 1fr;
-            }
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-
-            /* 1) 把自付費分成四等份 (2x2 Grid Layout) */
+            .kpi-grid { grid-template-columns: 1fr; }
+            .form-grid { grid-template-columns: 1fr; }
             .deductible-selector {
                 display: grid;
                 grid-template-columns: repeat(2, 1fr);
                 gap: 10px;
             }
-            .deductible-selector .btn-option {
-                min-width: 0;
-                width: 100%;
-            }
-
-            /* 2) 手機介面優化：表頭與數據統一對齊，精簡欄寬以便一次看完 5 項數據 */
-            .card {
-                padding: 12px 8px;
-            }
-
-            table {
-                font-size: 11.5px;
-                table-layout: fixed;
-                width: 100%;
-            }
-
-            th, td {
-                padding: 8px 4px;
-                word-break: break-word;
-                white-space: normal;
-            }
-
-            th {
-                writing-mode: horizontal-tb;
-                text-orientation: initial;
-                vertical-align: middle;
-                height: auto;
-                font-size: 11px;
-                line-height: 1.25;
-            }
-
-            /* 手機版各欄位寬度與對齊優化 (第 3 欄通脹調整係數維持 right) */
+            .deductible-selector .btn-option { min-width: 0; width: 100%; }
+            .card { padding: 12px 8px; }
+            table { font-size: 11.5px; table-layout: fixed; width: 100%; }
+            th, td { padding: 8px 4px; word-break: break-word; white-space: normal; }
+            th { writing-mode: horizontal-tb; text-orientation: initial; vertical-align: middle; height: auto; font-size: 11px; line-height: 1.25; }
             th:nth-child(1), td:nth-child(1) { width: 17%; text-align: center; }
             th:nth-child(2), td:nth-child(2) { width: 20%; text-align: right; }
             th:nth-child(3), td:nth-child(3) { width: 18%; text-align: right; }
@@ -480,38 +445,29 @@
 </div>
 
 <script>
-// 3. JavaScript 攔截雙擊事件以完全禁止 Double-tap Zoom
+// 禁止 iOS touch 雙擊點擊縮放
 let lastTouchEnd = 0;
 document.addEventListener('touchend', function (event) {
     const now = (new Date()).getTime();
     if (now - lastTouchEnd <= 300) {
-        event.preventDefault(); // 攔截 300ms 內的第二次點擊
+        event.preventDefault();
     }
     lastTouchEnd = now;
 }, false);
 
-// 全局數據結構（動態從 Excel 讀取填充）
-const vhisData = {
+// 全局數據結構
+let vhisData = {
     smart: {},
     advance: {},
     deluxe: {}
 };
 
-// 自付費選項定義（動態從 Excel 標題欄提取）
-const deductibleOptions = {
+let deductibleOptions = {
     smart: [],
     advance: [],
     deluxe: []
 };
 
-// 工作表名稱映射至內部 Plan key
-const sheetPlanMap = {
-    "智選計劃 (Smart)": "smart",
-    "精選計劃 (Advance)": "advance",
-    "優選計劃 (Deluxe)": "deluxe"
-};
-
-// 當前狀態
 let currentPlan = 'smart';
 let currentDeductible = '0';
 
@@ -534,31 +490,32 @@ const inflationInput = document.getElementById('inflationInput');
 const inflationMinus = document.getElementById('inflationMinus');
 const inflationPlus = document.getElementById('inflationPlus');
 
-// KPI 元素
 const kpiAgeDiff = document.getElementById('kpiAgeDiff');
 const kpiAgeRange = document.getElementById('kpiAgeRange');
 const kpiAvgMonthly = document.getElementById('kpiAvgMonthly');
 const kpiTotalPremium = document.getElementById('kpiTotalPremium');
 const kpiBaseTotal = document.getElementById('kpiBaseTotal');
 
-// 表格 Body
 const detailTableBody = document.getElementById('detailTableBody');
-
-// Chart 實例
 let chartInstance = null;
 
-// 從外部 Supreme VHIS.xlsx 讀取數據
+// 自動加載 Supreme VHIS.xlsx
 async function loadExcelData() {
     try {
-        const response = await fetch('./Supreme VHIS.xlsx');
-        if (!response.ok) {
-            throw new Error(`無法載入 Supreme VHIS.xlsx (${response.status})`);
-        }
+        const response = await fetch('./Supreme VHIS.xlsx?v=' + new Date().getTime());
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+        
+        vhisData = { smart: {}, advance: {}, deluxe: {} };
+        deductibleOptions = { smart: [], advance: [], deluxe: [] };
 
         workbook.SheetNames.forEach(sheetName => {
-            const planKey = sheetPlanMap[sheetName];
+            let planKey = null;
+            if (sheetName.includes("智選") || sheetName.toLowerCase().includes("smart")) planKey = "smart";
+            else if (sheetName.includes("精選") || sheetName.toLowerCase().includes("advance")) planKey = "advance";
+            else if (sheetName.includes("優選") || sheetName.toLowerCase().includes("deluxe")) planKey = "deluxe";
+
             if (!planKey) return;
 
             const worksheet = workbook.Sheets[sheetName];
@@ -566,15 +523,13 @@ async function loadExcelData() {
 
             if (!jsonData || jsonData.length < 2) return;
 
-            // 提取標題欄（第0列）
             const headers = jsonData[0];
-            const colMap = []; // 儲存 { index, deductibleVal, label }
+            const colMap = [];
 
             for (let i = 1; i < headers.length; i++) {
                 const headerText = String(headers[i] || '').trim();
                 if (!headerText) continue;
 
-                // 從標題文字（例如 "22,800港元自付費" 或 "0港元自付費"）中提取純數字
                 const numMatch = headerText.match(/[\d,]+/);
                 const rawNum = numMatch ? numMatch[0].replace(/,/g, '') : '0';
                 const formattedLabel = Number(rawNum).toLocaleString('en-US');
@@ -585,15 +540,16 @@ async function loadExcelData() {
                     label: formattedLabel
                 });
 
-                deductibleOptions[planKey].push({
-                    label: formattedLabel,
-                    val: rawNum
-                });
+                if (!deductibleOptions[planKey].some(opt => opt.val === rawNum)) {
+                    deductibleOptions[planKey].push({
+                        label: formattedLabel,
+                        val: rawNum
+                    });
+                }
 
-                vhisData[planKey][rawNum] = {};
+                vhisData[planKey][rawNum] = vhisData[planKey][rawNum] || {};
             }
 
-            // 讀取每一行年齡數據
             for (let r = 1; r < jsonData.length; r++) {
                 const row = jsonData[r];
                 if (!row || row[0] === undefined || row[0] === null || row[0] === '') continue;
@@ -610,12 +566,11 @@ async function loadExcelData() {
 
         init();
     } catch (err) {
-        console.error('讀取 Supreme VHIS.xlsx 失敗:', err);
-        alert('無法載入 Excel 保費數據檔 (Supreme VHIS.xlsx)，請確認檔案是否存在於同目錄下。');
+        console.error('自動讀取 Supreme VHIS.xlsx 失敗:', err);
     }
 }
 
-// 初始化
+// 初始化畫面與事件
 function init() {
     renderDeductibles();
     setupEventListeners();
@@ -646,14 +601,11 @@ function renderDeductibles() {
     });
 }
 
-// 雙向同步 Slider, Input 與 加減按鈕
 function setupControlGroup(slider, input, btnMinus, btnPlus, step, min, max, callback) {
     function setValue(val) {
         val = parseFloat(val);
         if (isNaN(val)) val = min;
         val = Math.max(min, Math.min(max, val));
-        
-        // 修正浮點數精度問題
         val = Math.round(val / step) * step;
         val = parseFloat(val.toFixed(2));
 
@@ -665,41 +617,31 @@ function setupControlGroup(slider, input, btnMinus, btnPlus, step, min, max, cal
     slider.addEventListener('input', (e) => setValue(e.target.value));
     input.addEventListener('change', (e) => setValue(e.target.value));
     
-    btnMinus.addEventListener('click', () => {
-        setValue(parseFloat(input.value) - step);
-    });
-
-    btnPlus.addEventListener('click', () => {
-        setValue(parseFloat(input.value) + step);
-    });
+    btnMinus.addEventListener('click', () => setValue(parseFloat(input.value) - step));
+    btnPlus.addEventListener('click', () => setValue(parseFloat(input.value) + step));
 }
 
-// 綁定事件監聽
 function setupEventListeners() {
-    // 計劃切換
     planSelector.querySelectorAll('.btn-option').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.onclick = () => {
             planSelector.querySelectorAll('.btn-option').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentPlan = btn.dataset.plan;
             renderDeductibles();
             updateCalculation();
-        });
+        };
     });
 
-    // 年齡及通脹控制器
     setupControlGroup(currentAgeSlider, currentAgeInput, currentAgeMinus, currentAgePlus, 1, 0, 100, () => updateCalculation());
     setupControlGroup(targetAgeSlider, targetAgeInput, targetAgeMinus, targetAgePlus, 1, 0, 100, () => updateCalculation());
     setupControlGroup(inflationSlider, inflationInput, inflationMinus, inflationPlus, 0.5, 0, 15, () => updateCalculation());
 }
 
-// 核心計算與畫面更新
 function updateCalculation() {
     let currentAge = parseInt(currentAgeInput.value) || 0;
     let targetAge = parseInt(targetAgeInput.value) || 0;
     let inflationRate = parseFloat(inflationInput.value) || 0;
 
-    // 確保目標年齡不小於現在年齡
     if (targetAge < currentAge) {
         targetAge = currentAge;
         targetAgeSlider.value = targetAge;
@@ -722,13 +664,13 @@ function updateCalculation() {
     let chartAdjustedData = [];
 
     for (let age = currentAge; age <= targetAge; age++) {
-        // 取得基本保費，若超過對應年齡則取最大可用年齡
-        let baseFee = deductibleObj[age];
+        let baseFee = deductibleObj[age] !== undefined ? deductibleObj[age] : deductibleObj[String(age)];
+        
         if (baseFee === undefined) {
-            const availableAges = Object.keys(deductibleObj).map(Number);
+            const availableAges = Object.keys(deductibleObj).map(Number).filter(n => !isNaN(n));
             if (availableAges.length > 0) {
                 const maxKey = Math.max(...availableAges);
-                baseFee = deductibleObj[maxKey] || 0;
+                baseFee = deductibleObj[maxKey] !== undefined ? deductibleObj[maxKey] : deductibleObj[String(maxKey)] || 0;
             } else {
                 baseFee = 0;
             }
@@ -741,14 +683,10 @@ function updateCalculation() {
         totalBasePremium += baseFee;
         totalAdjustedPremium += adjustedFee;
 
-        totalBasePremium = Math.round(totalBasePremium * 100) / 100;
-        totalAdjustedPremium = Math.round(totalAdjustedPremium * 100) / 100;
-
         chartLabels.push(`${age}歲`);
-        chartBaseData.push(baseFee);
+        chartBaseData.push(Math.round(baseFee));
         chartAdjustedData.push(Math.round(adjustedFee));
 
-        // 四捨五入至個位數
         const roundedBaseFee = Math.round(baseFee);
         const roundedAdjustedFee = Math.round(adjustedFee);
         const roundedTotalAdjusted = Math.round(totalAdjustedPremium);
@@ -766,7 +704,6 @@ function updateCalculation() {
 
     detailTableBody.innerHTML = tableRowsHTML;
 
-    // 計算平均每月保費
     const totalMonths = (ageDiff + 1) * 12;
     const avgMonthly = totalMonths > 0 ? totalAdjustedPremium / totalMonths : 0;
 
@@ -777,13 +714,9 @@ function updateCalculation() {
     updateChart(chartLabels, chartBaseData, chartAdjustedData);
 }
 
-// 更新 Chart.js 圖表
 function updateChart(labels, baseData, adjustedData) {
     const ctx = document.getElementById('premiumChart').getContext('2d');
-    
-    if (chartInstance) {
-        chartInstance.destroy();
-    }
+    if (chartInstance) chartInstance.destroy();
 
     chartInstance = new Chart(ctx, {
         type: 'line',
@@ -815,21 +748,15 @@ function updateChart(labels, baseData, adjustedData) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'top',
-                },
+                legend: { position: 'top' },
                 tooltip: {
                     mode: 'index',
                     intersect: false,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
-                            if (label) {
-                                label += ': ';
-                            }
-                            if (context.parsed.y !== null) {
-                                label += context.parsed.y.toLocaleString('en-US');
-                            }
+                            if (label) label += ': ';
+                            if (context.parsed.y !== null) label += context.parsed.y.toLocaleString('en-US');
                             return label;
                         }
                     }
@@ -849,7 +776,7 @@ function updateChart(labels, baseData, adjustedData) {
     });
 }
 
-// 網頁載入後發起讀取 Excel 檔案
+// 網頁啟動自動獲取 Excel 數據
 window.addEventListener('DOMContentLoaded', loadExcelData);
 </script>
 
