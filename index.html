@@ -2,9 +2,9 @@
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
-    <!-- 1. 在 viewport meta 中限制縮放 -->
+    <!-- 禁止 iOS 雙擊縮放 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>醫療融資分析計算器</title>
+    <title>醫療融資分析計算器 - Supreme VHIS</title>
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- SheetJS CDN (讀取 Excel 檔案) -->
@@ -19,10 +19,9 @@
             --text-color: #333333;
             --border-color: #e2e8f0;
             --accent-blue: #ebf8ff;
-            --accent-green: #f0fff4;
         }
 
-        /* 禁止 iOS touch 雙擊點擊效果 */
+        /* 禁止 touch 雙擊點擊縮放 */
         html, body {
             touch-action: manipulation;
         }
@@ -59,11 +58,6 @@
         header h1 {
             font-size: 26px;
             margin-bottom: 8px;
-        }
-
-        header p {
-            font-size: 14px;
-            opacity: 0.9;
         }
 
         .card {
@@ -211,13 +205,8 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.03);
         }
 
-        .kpi-card.green {
-            border-left-color: #28a745;
-        }
-
-        .kpi-card.orange {
-            border-left-color: #fd7e14;
-        }
+        .kpi-card.green { border-left-color: #28a745; }
+        .kpi-card.orange { border-left-color: #fd7e14; }
 
         .kpi-title {
             font-size: 13px;
@@ -365,7 +354,7 @@
     <div class="card">
         <div class="form-grid">
             
-            <!-- 1. 計劃選項 -->
+            <!-- 1. 計劃選項 (由 Excel 自動生成) -->
             <div class="form-group" style="grid-column: 1 / -1;">
                 <label>選擇保障計劃 (Plan)</label>
                 <div class="plan-selector" id="planSelector">
@@ -373,7 +362,7 @@
                 </div>
             </div>
 
-            <!-- 2. 自付費選項 -->
+            <!-- 2. 自付費選項 (由 Excel 自動生成) -->
             <div class="form-group" style="grid-column: 1 / -1;">
                 <label>選擇自付費選項 (Deductible)</label>
                 <div class="deductible-selector" id="deductibleSelector">
@@ -436,7 +425,7 @@
         </div>
     </div>
 
-    <!-- D) 保費趨勢圖 -->
+    <!-- 保費趨勢圖 -->
     <div class="card">
         <div class="section-title">📊 保費趨勢圖 (Premium Trend)</div>
         <div style="position: relative; height: 350px;">
@@ -444,7 +433,7 @@
         </div>
     </div>
 
-    <!-- E) 年度保單詳細表格 -->
+    <!-- 年度保單詳細表格 -->
     <div class="card">
         <div class="section-title">📋 年度保單詳細表格 (Annual Policy Detail)</div>
         <div class="table-container">
@@ -465,7 +454,7 @@
         </div>
     </div>
 
-    <!-- 頁底免責聲明 -->
+    <!-- 免責聲明 -->
     <footer>
         <h4>⚠️ 免責聲明 (Disclaimer)</h4>
         <p>1. 本網站及試算器所載之數據及保費資料僅供參考用途。</p>
@@ -492,13 +481,12 @@ let currentPlan = '';
 let currentDeductible = '';
 let chartInstance = null;
 
-// 指定讀取 Target Excel 檔案
+// 讀取唯一的 Excel 檔案
 const EXCEL_FILE_NAME = 'Supreme VHIS.xlsx';
 
-// 初始化載入 Excel
+// 載入 Excel
 async function loadExcelData() {
     try {
-        // 使用 encodeURIComponent 確保空格轉換為 %20
         const response = await fetch(encodeURIComponent(EXCEL_FILE_NAME));
         if (!response.ok) {
             throw new Error(`HTTP status ${response.status}`);
@@ -538,7 +526,7 @@ function parseWorkbook(workbook) {
         if (rows.length === 0) return;
 
         rows.forEach(row => {
-            const plan = String(row['Plan'] || row['plan'] || row['計劃'] || sheetName).trim().toLowerCase();
+            const plan = String(row['Plan'] || row['plan'] || row['計劃'] || sheetName).trim();
             const deductible = String(row['Deductible'] || row['deductible'] || row['自付費'] || '0').trim();
             const age = String(row['Age'] || row['age'] || row['年齡']).trim();
             const premium = parseFloat(row['Premium'] || row['premium'] || row['保費'] || row['基本年度保費']);
@@ -552,7 +540,7 @@ function parseWorkbook(workbook) {
     });
 }
 
-// 界面顯示與選單建立
+// 建立 UI 界面
 function initUI() {
     const planSelector = document.getElementById('planSelector');
     planSelector.innerHTML = '';
@@ -566,7 +554,7 @@ function initUI() {
         const btn = document.createElement('button');
         btn.className = `btn-option ${idx === 0 ? 'active' : ''}`;
         btn.dataset.plan = p;
-        btn.textContent = getPlanDisplayName(p);
+        btn.textContent = p; // 直接顯示 Excel 內的 Plan 名稱
         btn.addEventListener('click', () => {
             document.querySelectorAll('#planSelector .btn-option').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
@@ -580,15 +568,6 @@ function initUI() {
     renderDeductibles();
     setupEventListeners();
     updateCalculation();
-}
-
-function getPlanDisplayName(plan) {
-    const map = {
-        'smart': '智選計劃 (Smart)',
-        'advance': '精選計劃 (Advance)',
-        'deluxe': '優選計劃 (Deluxe)'
-    };
-    return map[plan.toLowerCase()] || plan.toUpperCase();
 }
 
 function renderDeductibles() {
@@ -728,7 +707,7 @@ function updateCalculation() {
     updateChart(chartLabels, chartBaseData, chartAdjustedData);
 }
 
-// Chart.js 畫圖
+// Chart.js 繪製圖表
 function updateChart(labels, baseData, adjustedData) {
     const ctx = document.getElementById('premiumChart').getContext('2d');
 
