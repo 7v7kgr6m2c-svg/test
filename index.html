@@ -2,7 +2,7 @@
 <html lang="zh-HK">
 <head>
     <meta charset="UTF-8">
-    <!-- 1. 在 viewport meta 中加入 user-scalable=no, maximum-scale=1.0, minimum-scale=1.0 限制縮放 -->
+    <!-- 1. 在 viewport meta 中限制縮放 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>醫療融資分析計算器</title>
     <!-- Chart.js CDN -->
@@ -309,6 +309,13 @@
             100% { transform: rotate(360deg); }
         }
 
+        .error-msg {
+            color: #e53e3e;
+            font-weight: 600;
+            font-size: 14px;
+            padding: 10px 0;
+        }
+
         footer {
             margin-top: 30px;
             padding: 20px;
@@ -346,7 +353,7 @@
 
 <div id="loadingOverlay">
     <div class="spinner"></div>
-    <div id="loadingText">正在載入 Excel 數據資料...</div>
+    <div id="loadingText">正在載入 Supreme VHIS.xlsx 數據...</div>
 </div>
 
 <div class="container">
@@ -362,7 +369,7 @@
             <div class="form-group" style="grid-column: 1 / -1;">
                 <label>選擇保障計劃 (Plan)</label>
                 <div class="plan-selector" id="planSelector">
-                    <!-- Dynamic buttons -->
+                    <!-- 動態生成按鈕 -->
                 </div>
             </div>
 
@@ -370,7 +377,7 @@
             <div class="form-group" style="grid-column: 1 / -1;">
                 <label>選擇自付費選項 (Deductible)</label>
                 <div class="deductible-selector" id="deductibleSelector">
-                    <!-- Dynamic buttons -->
+                    <!-- 動態生成按鈕 -->
                 </div>
             </div>
 
@@ -410,7 +417,7 @@
         </div>
     </div>
 
-    <!-- 關鍵指標顯示 (A, B, C) -->
+    <!-- 關鍵指標顯示 -->
     <div class="kpi-grid">
         <div class="kpi-card">
             <div class="kpi-title">年齡相差 (保障年期)</div>
@@ -485,43 +492,42 @@ let currentPlan = '';
 let currentDeductible = '';
 let chartInstance = null;
 
-// 自動讀取的目標 Excel 檔名（支援大小寫/含年份變體）
-const EXCEL_FILE_TARGETS = [
-    'Supreme VHIS.xlsx',
-    'Supreme VHIS 2026.xlsx',
-    'supreme vhis.xlsx'
-];
+// 指定讀取 Target Excel 檔案
+const EXCEL_FILE_NAME = 'Supreme VHIS.xlsx';
 
 // 初始化載入 Excel
 async function loadExcelData() {
-    let loadedSuccess = false;
-
-    for (const fileName of EXCEL_FILE_TARGETS) {
-        try {
-            const response = await fetch(encodeURIComponent(fileName));
-            if (!response.ok) continue;
-
-            const arrayBuffer = await response.arrayBuffer();
-            const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-
-            parseWorkbook(workbook);
-            loadedSuccess = true;
-            break; 
-        } catch (e) {
-            console.warn(`嘗試讀取 ${fileName} 時失敗:`, e);
+    try {
+        // 使用 encodeURIComponent 確保空格轉換為 %20
+        const response = await fetch(encodeURIComponent(EXCEL_FILE_NAME));
+        if (!response.ok) {
+            throw new Error(`HTTP status ${response.status}`);
         }
-    }
 
-    document.getElementById('loadingOverlay').style.display = 'none';
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
-    if (loadedSuccess && Object.keys(vhisData).length > 0) {
-        initUI();
-    } else {
-        alert('無法載入 Excel 資料檔，請確認同目錄下存有 Supreme VHIS.xlsx');
+        parseWorkbook(workbook);
+        document.getElementById('loadingOverlay').style.display = 'none';
+
+        if (Object.keys(vhisData).length > 0) {
+            initUI();
+        } else {
+            showError('Supreme VHIS.xlsx 中找不到有效的保費數據，請檢查表格內容格式。');
+        }
+    } catch (e) {
+        console.error('載入 Excel 失敗:', e);
+        document.getElementById('loadingOverlay').style.display = 'none';
+        showError('未能成功載入「Supreme VHIS.xlsx」，請確定該檔案已放在與 index.html 相同的目錄下。');
     }
 }
 
-// 解析 Excel Workbook 內容
+function showError(msg) {
+    const planSelector = document.getElementById('planSelector');
+    planSelector.innerHTML = `<div class="error-msg">⚠️ ${msg}</div>`;
+}
+
+// 解析 Excel 內容
 function parseWorkbook(workbook) {
     vhisData = {};
 
@@ -531,7 +537,6 @@ function parseWorkbook(workbook) {
 
         if (rows.length === 0) return;
 
-        // 判斷工作表格式
         rows.forEach(row => {
             const plan = String(row['Plan'] || row['plan'] || row['計劃'] || sheetName).trim().toLowerCase();
             const deductible = String(row['Deductible'] || row['deductible'] || row['自付費'] || '0').trim();
