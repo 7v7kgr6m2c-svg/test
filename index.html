@@ -7,7 +7,7 @@
     <title>醫療融資分析計算器</title>
     <!-- Chart.js CDN -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- SheetJS (XLSX) CDN 用於讀取外部 Excel 檔案 -->
+    <!-- SheetJS (xlsx) CDN 用於解析 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
         :root {
@@ -22,7 +22,7 @@
             --accent-green: #f0fff4;
         }
 
-        /* 2. 禁止 iOS touch 雙擊點擊效果 */
+        /* 2. 禁止 iOS touch 雙擊點擊效果 (視需要可加入 touch-action) */
         html, body {
             touch-action: manipulation;
         }
@@ -253,7 +253,7 @@
             border-collapse: collapse;
             font-size: 14px;
             table-layout: fixed;
-            font-variant-numeric: tabular-nums;
+            font-variant-numeric: tabular-nums; /* 確保數字、逗號及點號垂直精確對齊 */
         }
 
         th, td {
@@ -271,6 +271,7 @@
             z-index: 10;
         }
 
+        /* 設定表格欄位對齊與寬度 (第 3 欄通脹調整係數改為 right) */
         th:nth-child(1), td:nth-child(1) { width: 18%; text-align: center; }
         th:nth-child(2), td:nth-child(2) { width: 20.5%; text-align: right; }
         th:nth-child(3), td:nth-child(3) { width: 18%; text-align: right; }
@@ -285,6 +286,7 @@
             background-color: #e2e8f0;
         }
 
+        /* Footer Disclaimer */
         footer {
             margin-top: 30px;
             padding: 20px;
@@ -300,38 +302,6 @@
             color: #2d3748;
         }
 
-        /* Loading Indicator Overlay */
-        #loadingOverlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(255, 255, 255, 0.85);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            z-index: 9999;
-            font-weight: bold;
-            color: var(--primary-color);
-        }
-
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid var(--primary-color);
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 12px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
         @media (max-width: 768px) {
             .kpi-grid {
                 grid-template-columns: 1fr;
@@ -340,6 +310,7 @@
                 grid-template-columns: 1fr;
             }
 
+            /* 1) 把自付費分成四等份 (2x2 Grid Layout) */
             .deductible-selector {
                 display: grid;
                 grid-template-columns: repeat(2, 1fr);
@@ -350,6 +321,7 @@
                 width: 100%;
             }
 
+            /* 2) 手機介面優化：表頭與數據統一對齊，精簡欄寬以便一次看完 5 項數據 */
             .card {
                 padding: 12px 8px;
             }
@@ -375,6 +347,7 @@
                 line-height: 1.25;
             }
 
+            /* 手機版各欄位寬度與對齊優化 (第 3 欄通脹調整係數維持 right) */
             th:nth-child(1), td:nth-child(1) { width: 17%; text-align: center; }
             th:nth-child(2), td:nth-child(2) { width: 20%; text-align: right; }
             th:nth-child(3), td:nth-child(3) { width: 18%; text-align: right; }
@@ -384,12 +357,6 @@
     </style>
 </head>
 <body>
-
-<!-- 載入中提示 -->
-<div id="loadingOverlay">
-    <div class="spinner"></div>
-    <div id="loadingText">正在載入保費數據 (Supreme VHIS.xlsx)...</div>
-</div>
 
 <div class="container">
     <header>
@@ -513,279 +480,307 @@
 </div>
 
 <script>
-// 攔截雙擊事件以完全禁止 Double-tap Zoom
+// 3. JavaScript 攔截雙擊事件以完全禁止 Double-tap Zoom
 let lastTouchEnd = 0;
 document.addEventListener('touchend', function (event) {
     const now = (new Date()).getTime();
     if (now - lastTouchEnd <= 300) {
-        event.preventDefault();
+        event.preventDefault(); // 攔截 300ms 內的第二次點擊
     }
     lastTouchEnd = now;
 }, false);
 
-// 全域保費數據結構 (將由 Excel 動態填入)
-let vhisData = {};
-
-// 狀態變數
-let selectedPlan = 'smart';
-let selectedDeductible = '0';
-let chartInstance = null;
-
-// 定義各計劃對應的自付費選項 (預設備用)
-const deductibleOptionsMap = {
-    'smart': ['0', '22800', '45000', '100000'],
-    'advance': ['0', '8000', '22800', '45000', '100000'],
-    'deluxe': ['0', '8000', '22800', '45000', '100000']
+// 全局數據結構（動態從 Excel 讀取填充）
+const vhisData = {
+    smart: {},
+    advance: {},
+    deluxe: {}
 };
 
-// 從外部 Excel (Supreme VHIS.xlsx) 非同步載入數據
+// 自付費選項定義（動態從 Excel 標題欄提取）
+const deductibleOptions = {
+    smart: [],
+    advance: [],
+    deluxe: []
+};
+
+// 工作表名稱映射至內部 Plan key
+const sheetPlanMap = {
+    "智選計劃 (Smart)": "smart",
+    "精選計劃 (Advance)": "advance",
+    "優選計劃 (Deluxe)": "deluxe"
+};
+
+// 當前狀態
+let currentPlan = 'smart';
+let currentDeductible = '0';
+
+// DOM 元素
+const planSelector = document.getElementById('planSelector');
+const deductibleSelector = document.getElementById('deductibleSelector');
+
+const currentAgeSlider = document.getElementById('currentAgeSlider');
+const currentAgeInput = document.getElementById('currentAgeInput');
+const currentAgeMinus = document.getElementById('currentAgeMinus');
+const currentAgePlus = document.getElementById('currentAgePlus');
+
+const targetAgeSlider = document.getElementById('targetAgeSlider');
+const targetAgeInput = document.getElementById('targetAgeInput');
+const targetAgeMinus = document.getElementById('targetAgeMinus');
+const targetAgePlus = document.getElementById('targetAgePlus');
+
+const inflationSlider = document.getElementById('inflationSlider');
+const inflationInput = document.getElementById('inflationInput');
+const inflationMinus = document.getElementById('inflationMinus');
+const inflationPlus = document.getElementById('inflationPlus');
+
+// KPI 元素
+const kpiAgeDiff = document.getElementById('kpiAgeDiff');
+const kpiAgeRange = document.getElementById('kpiAgeRange');
+const kpiAvgMonthly = document.getElementById('kpiAvgMonthly');
+const kpiTotalPremium = document.getElementById('kpiTotalPremium');
+const kpiBaseTotal = document.getElementById('kpiBaseTotal');
+
+// 表格 Body
+const detailTableBody = document.getElementById('detailTableBody');
+
+// Chart 實例
+let chartInstance = null;
+
+// 從外部 Supreme VHIS.xlsx 讀取數據
 async function loadExcelData() {
     try {
-        const response = await fetch('Supreme VHIS.xlsx');
+        const response = await fetch('./Supreme VHIS.xlsx');
         if (!response.ok) {
-            throw new Error(`無法讀取 Excel 檔案, HTTP Status: ${response.status}`);
+            throw new Error(`無法載入 Supreme VHIS.xlsx (${response.status})`);
         }
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
 
-        const data = {};
-
         workbook.SheetNames.forEach(sheetName => {
-            const planKey = sheetName.toLowerCase().trim();
+            const planKey = sheetPlanMap[sheetName];
+            if (!planKey) return;
+
             const worksheet = workbook.Sheets[sheetName];
-            const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: null });
+            const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-            if (jsonRows.length === 0) return;
+            if (!jsonData || jsonData.length < 2) return;
 
-            data[planKey] = {};
+            // 提取標題欄（第0列）
+            const headers = jsonData[0];
+            const colMap = []; // 儲存 { index, deductibleVal, label }
 
-            // 尋找表頭欄位（判斷哪一欄是年齡 Age）
-            const firstRow = jsonRows[0];
-            const ageKey = Object.keys(firstRow).find(k => k.toLowerCase().includes('age') || k.includes('年齡')) || Object.keys(firstRow)[0];
-            const deductibleKeys = Object.keys(firstRow).filter(k => k !== ageKey);
+            for (let i = 1; i < headers.length; i++) {
+                const headerText = String(headers[i] || '').trim();
+                if (!headerText) continue;
 
-            deductibleKeys.forEach(dKey => {
-                const cleanDeductible = String(dKey).replace(/[^0-9]/g, '') || '0';
-                data[planKey][cleanDeductible] = {};
-            });
+                // 從標題文字（例如 "22,800港元自付費" 或 "0港元自付費"）中提取純數字
+                const numMatch = headerText.match(/[\d,]+/);
+                const rawNum = numMatch ? numMatch[0].replace(/,/g, '') : '0';
+                const formattedLabel = Number(rawNum).toLocaleString('en-US');
 
-            jsonRows.forEach(row => {
-                const age = row[ageKey];
-                if (age !== null && age !== undefined && !isNaN(age)) {
-                    deductibleKeys.forEach(dKey => {
-                        const cleanDeductible = String(dKey).replace(/[^0-9]/g, '') || '0';
-                        const val = parseFloat(row[dKey]);
-                        if (!isNaN(val)) {
-                            data[planKey][cleanDeductible][String(age)] = val;
-                        }
-                    });
-                }
-            });
+                colMap.push({
+                    colIdx: i,
+                    val: rawNum,
+                    label: formattedLabel
+                });
+
+                deductibleOptions[planKey].push({
+                    label: formattedLabel,
+                    val: rawNum
+                });
+
+                vhisData[planKey][rawNum] = {};
+            }
+
+            // 讀取每一行年齡數據
+            for (let r = 1; r < jsonData.length; r++) {
+                const row = jsonData[r];
+                if (!row || row[0] === undefined || row[0] === null || row[0] === '') continue;
+
+                const age = parseInt(row[0]);
+                if (isNaN(age)) continue;
+
+                colMap.forEach(col => {
+                    const fee = parseFloat(row[col.colIdx]);
+                    vhisData[planKey][col.val][age] = isNaN(fee) ? 0 : fee;
+                });
+            }
         });
 
-        vhisData = data;
-        
-        // 隱藏載入遮罩
-        document.getElementById('loadingOverlay').style.display = 'none';
-
-        // 初始化介面與計算
-        initApp();
-
+        init();
     } catch (err) {
-        console.error("保費數據載入失敗:", err);
-        document.getElementById('loadingText').innerText = '保費數據載入失敗！請確保 Supreme VHIS.xlsx 位於相同目錄下。';
-        document.getElementById('loadingText').style.color = 'red';
+        console.error('讀取 Supreme VHIS.xlsx 失敗:', err);
+        alert('無法載入 Excel 保費數據檔 (Supreme VHIS.xlsx)，請確認檔案是否存在於同目錄下。');
     }
 }
 
-// 格式化數字千分位
-function formatNumber(num) {
-    return Math.round(num).toLocaleString('en-US');
+// 初始化
+function init() {
+    renderDeductibles();
+    setupEventListeners();
+    updateCalculation();
 }
 
-// 動態更新自付費按鈕選項
-function updateDeductibleOptions() {
-    const deductibleContainer = document.getElementById('deductibleSelector');
-    deductibleContainer.innerHTML = '';
-
-    // 若 Excel 成功解析出自付費選項則優先使用 Excel 內的選項，否則使用預設 MAP
-    let options = [];
-    if (vhisData[selectedPlan]) {
-        options = Object.keys(vhisData[selectedPlan]);
-    } else {
-        options = deductibleOptionsMap[selectedPlan] || ['0'];
+// 渲染自付費按鈕
+function renderDeductibles() {
+    deductibleSelector.innerHTML = '';
+    const options = deductibleOptions[currentPlan] || [];
+    
+    if (!options.some(opt => opt.val === currentDeductible)) {
+        currentDeductible = options[0] ? options[0].val : '0';
     }
 
-    // 確保 selectedDeductible 在有效範圍內
-    if (!options.includes(selectedDeductible)) {
-        selectedDeductible = options[0];
-    }
-
-    options.forEach(ded => {
+    options.forEach(opt => {
         const btn = document.createElement('button');
-        btn.className = `btn-option ${ded === selectedDeductible ? 'active' : ''}`;
-        btn.setAttribute('data-deductible', ded);
-        btn.innerText = ded === '0' ? 'HK$ 0 (全額保障)' : `HK$ ${parseInt(ded).toLocaleString()}`;
-        
+        btn.className = `btn-option ${opt.val === currentDeductible ? 'active' : ''}`;
+        btn.dataset.deductible = opt.val;
+        btn.textContent = opt.label;
         btn.addEventListener('click', () => {
-            selectedDeductible = ded;
             document.querySelectorAll('#deductibleSelector .btn-option').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            calculateAndRender();
+            currentDeductible = opt.val;
+            updateCalculation();
         });
-
-        deductibleContainer.appendChild(btn);
+        deductibleSelector.appendChild(btn);
     });
 }
 
-// 初始化應用程式監聽器
-function initApp() {
-    updateDeductibleOptions();
+// 雙向同步 Slider, Input 與 加減按鈕
+function setupControlGroup(slider, input, btnMinus, btnPlus, step, min, max, callback) {
+    function setValue(val) {
+        val = parseFloat(val);
+        if (isNaN(val)) val = min;
+        val = Math.max(min, Math.min(max, val));
+        
+        // 修正浮點數精度問題
+        val = Math.round(val / step) * step;
+        val = parseFloat(val.toFixed(2));
 
-    // 1. 計劃選擇按鈕
-    document.querySelectorAll('#planSelector .btn-option').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            document.querySelectorAll('#planSelector .btn-option').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            selectedPlan = btn.getAttribute('data-plan');
-            updateDeductibleOptions();
-            calculateAndRender();
-        });
-    });
-
-    // 2. 滑塊與輸入框同步綁定
-    setupSyncControls('currentAgeSlider', 'currentAgeInput', 'currentAgeMinus', 'currentAgePlus', 0, 100, 1);
-    setupSyncControls('targetAgeSlider', 'targetAgeInput', 'targetAgeMinus', 'targetAgePlus', 0, 100, 1);
-    setupSyncControls('inflationSlider', 'inflationInput', 'inflationMinus', 'inflationPlus', 0, 15, 0.5);
-
-    // 首次計算與渲染
-    calculateAndRender();
-}
-
-// 控制組件同步函式
-function setupSyncControls(sliderId, inputId, minusBtnId, plusBtnId, min, max, step) {
-    const slider = document.getElementById(sliderId);
-    const input = document.getElementById(inputId);
-    const minusBtn = document.getElementById(minusBtnId);
-    const plusBtn = document.getElementById(plusBtnId);
-
-    function updateValue(val) {
-        let numVal = parseFloat(val);
-        if (isNaN(numVal)) numVal = min;
-        if (numVal < min) numVal = min;
-        if (numVal > max) numVal = max;
-
-        slider.value = numVal;
-        input.value = numVal;
-
-        // 年齡自動防止：現在年齡不大於目標年齡
-        if (sliderId === 'currentAgeSlider') {
-            const targetVal = parseFloat(document.getElementById('targetAgeInput').value);
-            if (numVal > targetVal) {
-                document.getElementById('targetAgeSlider').value = numVal;
-                document.getElementById('targetAgeInput').value = numVal;
-            }
-        } else if (sliderId === 'targetAgeSlider') {
-            const currentVal = parseFloat(document.getElementById('currentAgeInput').value);
-            if (numVal < currentVal) {
-                document.getElementById('currentAgeSlider').value = numVal;
-                document.getElementById('currentAgeInput').value = numVal;
-            }
-        }
-
-        calculateAndRender();
+        slider.value = val;
+        input.value = val;
+        if (callback) callback(val);
     }
 
-    slider.addEventListener('input', (e) => updateValue(e.target.value));
-    input.addEventListener('change', (e) => updateValue(e.target.value));
-
-    minusBtn.addEventListener('click', () => {
-        let curr = parseFloat(input.value) || min;
-        updateValue(curr - step);
-    });
-
-    plusBtn.addEventListener('click', () => {
-        let curr = parseFloat(input.value) || min;
-        updateValue(curr + step);
-    });
-}
-
-// 核心計算與渲染
-function calculateAndRender() {
-    const currentAge = parseInt(document.getElementById('currentAgeInput').value);
-    const targetAge = parseInt(document.getElementById('targetAgeInput').value);
-    const inflationRate = parseFloat(document.getElementById('inflationInput').value) / 100;
-
-    const ageDiff = Math.max(0, targetAge - currentAge);
+    slider.addEventListener('input', (e) => setValue(e.target.value));
+    input.addEventListener('change', (e) => setValue(e.target.value));
     
-    // 取得數據陣列
-    const planData = vhisData[selectedPlan];
-    const deductibleData = planData ? planData[selectedDeductible] : null;
+    btnMinus.addEventListener('click', () => {
+        setValue(parseFloat(input.value) - step);
+    });
 
-    let totalNominal = 0;
-    let totalAdjusted = 0;
-
-    const labels = [];
-    const nominalSeries = [];
-    const adjustedSeries = [];
-    const tableRows = [];
-
-    let accumulativeTotal = 0;
-
-    for (let i = 0; i <= ageDiff; i++) {
-        const age = currentAge + i;
-        labels.push(`${age} 歲`);
-
-        // 從 Excel 數據中查找保費 (若無則預設為 0)
-        let basePremium = 0;
-        if (deductibleData) {
-            basePremium = deductibleData[String(age)] || deductibleData[age] || 0;
-        }
-
-        // 通脹係數 (1 + rate)^i
-        const inflationFactor = Math.pow(1 + inflationRate, i);
-        const adjustedPremium = basePremium * inflationFactor;
-
-        totalNominal += basePremium;
-        totalAdjusted += adjustedPremium;
-        accumulativeTotal += adjustedPremium;
-
-        nominalSeries.push(basePremium);
-        adjustedSeries.push(adjustedPremium);
-
-        tableRows.push(`
-            <tr>
-                <td style="text-align: center;">${age} 歲</td>
-                <td style="text-align: right;">HK$ ${formatNumber(basePremium)}</td>
-                <td style="text-align: right;">${inflationFactor.toFixed(4)}</td>
-                <td style="text-align: right; font-weight: 600; color: var(--primary-color);">HK$ ${formatNumber(adjustedPremium)}</td>
-                <td style="text-align: right; font-weight: 600; color: #d97706;">HK$ ${formatNumber(accumulativeTotal)}</td>
-            </tr>
-        `);
-    }
-
-    // 計算每月平均 (總保費 / 總月份)
-    const totalMonths = (ageDiff + 1) * 12;
-    const avgMonthly = totalMonths > 0 ? totalAdjusted / totalMonths : 0;
-
-    // 更新 KPI Cards
-    document.getElementById('kpiAgeDiff').innerText = `${ageDiff + 1} 年`;
-    document.getElementById('kpiAgeRange').innerText = `由 ${currentAge} 歲至 ${targetAge} 歲`;
-    document.getElementById('kpiAvgMonthly').innerText = `HK$ ${formatNumber(avgMonthly)}`;
-    document.getElementById('kpiTotalPremium').innerText = `HK$ ${formatNumber(totalAdjusted)}`;
-    document.getElementById('kpiBaseTotal').innerText = `基本保費總和 (不含通脹): HK$ ${formatNumber(totalNominal)}`;
-
-    // 更新表格
-    document.getElementById('detailTableBody').innerHTML = tableRows.join('');
-
-    // 更新 Chart.js 圖表
-    renderChart(labels, nominalSeries, adjustedSeries);
+    btnPlus.addEventListener('click', () => {
+        setValue(parseFloat(input.value) + step);
+    });
 }
 
-// 繪製/更新圖表
-function renderChart(labels, nominalData, adjustedData) {
-    const ctx = document.getElementById('premiumChart').getContext('2d');
+// 綁定事件監聽
+function setupEventListeners() {
+    // 計劃切換
+    planSelector.querySelectorAll('.btn-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+            planSelector.querySelectorAll('.btn-option').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentPlan = btn.dataset.plan;
+            renderDeductibles();
+            updateCalculation();
+        });
+    });
 
+    // 年齡及通脹控制器
+    setupControlGroup(currentAgeSlider, currentAgeInput, currentAgeMinus, currentAgePlus, 1, 0, 100, () => updateCalculation());
+    setupControlGroup(targetAgeSlider, targetAgeInput, targetAgeMinus, targetAgePlus, 1, 0, 100, () => updateCalculation());
+    setupControlGroup(inflationSlider, inflationInput, inflationMinus, inflationPlus, 0.5, 0, 15, () => updateCalculation());
+}
+
+// 核心計算與畫面更新
+function updateCalculation() {
+    let currentAge = parseInt(currentAgeInput.value) || 0;
+    let targetAge = parseInt(targetAgeInput.value) || 0;
+    let inflationRate = parseFloat(inflationInput.value) || 0;
+
+    // 確保目標年齡不小於現在年齡
+    if (targetAge < currentAge) {
+        targetAge = currentAge;
+        targetAgeSlider.value = targetAge;
+        targetAgeInput.value = targetAge;
+    }
+
+    const ageDiff = targetAge - currentAge;
+    kpiAgeDiff.textContent = `${ageDiff} 年`;
+    kpiAgeRange.textContent = `由 ${currentAge} 歲至 ${targetAge} 歲`;
+
+    const planObj = vhisData[currentPlan] || {};
+    const deductibleObj = planObj[currentDeductible] || planObj["0"] || {};
+
+    let totalBasePremium = 0;
+    let totalAdjustedPremium = 0;
+    
+    let tableRowsHTML = '';
+    let chartLabels = [];
+    let chartBaseData = [];
+    let chartAdjustedData = [];
+
+    for (let age = currentAge; age <= targetAge; age++) {
+        // 取得基本保費，若超過對應年齡則取最大可用年齡
+        let baseFee = deductibleObj[age];
+        if (baseFee === undefined) {
+            const availableAges = Object.keys(deductibleObj).map(Number);
+            if (availableAges.length > 0) {
+                const maxKey = Math.max(...availableAges);
+                baseFee = deductibleObj[maxKey] || 0;
+            } else {
+                baseFee = 0;
+            }
+        }
+
+        const yearsElapsed = age - currentAge;
+        const inflationFactor = Math.pow(1 + inflationRate / 100, yearsElapsed);
+        const adjustedFee = baseFee * inflationFactor;
+
+        totalBasePremium += baseFee;
+        totalAdjustedPremium += adjustedFee;
+
+        totalBasePremium = Math.round(totalBasePremium * 100) / 100;
+        totalAdjustedPremium = Math.round(totalAdjustedPremium * 100) / 100;
+
+        chartLabels.push(`${age}歲`);
+        chartBaseData.push(baseFee);
+        chartAdjustedData.push(Math.round(adjustedFee));
+
+        // 四捨五入至個位數
+        const roundedBaseFee = Math.round(baseFee);
+        const roundedAdjustedFee = Math.round(adjustedFee);
+        const roundedTotalAdjusted = Math.round(totalAdjustedPremium);
+
+        tableRowsHTML += `
+            <tr>
+                <td>${age} 歲</td>
+                <td>${roundedBaseFee.toLocaleString('en-US')}</td>
+                <td>${inflationFactor.toFixed(4)}</td>
+                <td>${roundedAdjustedFee.toLocaleString('en-US')}</td>
+                <td>${roundedTotalAdjusted.toLocaleString('en-US')}</td>
+            </tr>
+        `;
+    }
+
+    detailTableBody.innerHTML = tableRowsHTML;
+
+    // 計算平均每月保費
+    const totalMonths = (ageDiff + 1) * 12;
+    const avgMonthly = totalMonths > 0 ? totalAdjustedPremium / totalMonths : 0;
+
+    kpiAvgMonthly.textContent = `${Math.round(avgMonthly).toLocaleString('en-US')}`;
+    kpiTotalPremium.textContent = `${Math.round(totalAdjustedPremium).toLocaleString('en-US')}`;
+    kpiBaseTotal.textContent = `基本保費總和 (不含通脹): ${Math.round(totalBasePremium).toLocaleString('en-US')}`;
+
+    updateChart(chartLabels, chartBaseData, chartAdjustedData);
+}
+
+// 更新 Chart.js 圖表
+function updateChart(labels, baseData, adjustedData) {
+    const ctx = document.getElementById('premiumChart').getContext('2d');
+    
     if (chartInstance) {
         chartInstance.destroy();
     }
@@ -796,44 +791,36 @@ function renderChart(labels, nominalData, adjustedData) {
             labels: labels,
             datasets: [
                 {
-                    label: '基本年度保費 (不含通脹)',
-                    data: nominalData,
-                    borderColor: '#94a3b8',
-                    backgroundColor: 'rgba(148, 163, 184, 0.1)',
-                    borderDash: [5, 5],
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    fill: false,
-                    tension: 0.2
-                },
-                {
                     label: '調整後年度保費 (含通脹)',
                     data: adjustedData,
                     borderColor: '#0056b3',
                     backgroundColor: 'rgba(0, 86, 179, 0.1)',
-                    borderWidth: 3,
-                    pointRadius: 4,
-                    pointBackgroundColor: '#0056b3',
+                    borderWidth: 2.5,
                     fill: true,
-                    tension: 0.2
+                    tension: 0.1
+                },
+                {
+                    label: '基本年度保費 (不含通脹)',
+                    data: baseData,
+                    borderColor: '#28a745',
+                    backgroundColor: 'transparent',
+                    borderWidth: 2,
+                    borderDash: [5, 5],
+                    fill: false,
+                    tension: 0.1
                 }
             ]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: {
-                mode: 'index',
-                intersect: false,
-            },
             plugins: {
                 legend: {
                     position: 'top',
-                    labels: {
-                        font: { size: 13, weight: '600' }
-                    }
                 },
                 tooltip: {
+                    mode: 'index',
+                    intersect: false,
                     callbacks: {
                         label: function(context) {
                             let label = context.dataset.label || '';
@@ -841,7 +828,7 @@ function renderChart(labels, nominalData, adjustedData) {
                                 label += ': ';
                             }
                             if (context.parsed.y !== null) {
-                                label += 'HK$ ' + formatNumber(context.parsed.y);
+                                label += context.parsed.y.toLocaleString('en-US');
                             }
                             return label;
                         }
@@ -849,14 +836,11 @@ function renderChart(labels, nominalData, adjustedData) {
                 }
             },
             scales: {
-                x: {
-                    grid: { display: false }
-                },
                 y: {
                     beginAtZero: true,
                     ticks: {
                         callback: function(value) {
-                            return 'HK$ ' + (value >= 1000 ? (value/1000) + 'k' : value);
+                            return value.toLocaleString('en-US');
                         }
                     }
                 }
@@ -865,7 +849,7 @@ function renderChart(labels, nominalData, adjustedData) {
     });
 }
 
-// 頁面載入時觸發數據載入
+// 網頁載入後發起讀取 Excel 檔案
 window.addEventListener('DOMContentLoaded', loadExcelData);
 </script>
 
