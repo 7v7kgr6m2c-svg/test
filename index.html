@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v55)</title>
+    <title>保費融資計算機 (v56)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -603,7 +603,7 @@
             background: #FFFFFF;
             border-radius: 12px;
             width: 100%;
-            max-width: 420px;
+            max-width: 440px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
             overflow: hidden;
             animation: slideUp 0.25s ease;
@@ -1141,6 +1141,59 @@
             return val.toLocaleString('en-US');
         }
 
+        // 開啟 Pop-up 算式細節
+        function showPrincipalDetails() {
+            var isHKD = currentCalcCtx.isHKD;
+            var notional = currentCalcCtx.notional;
+            var discountUSD = currentCalcCtx.discountUSD;
+            var loanUSD = currentCalcCtx.loanUSD;
+            var principalUSD = currentCalcCtx.principalUSD;
+
+            document.getElementById('modalTitle').innerText = '本金算式';
+
+            var html = '<div class="calc-stack">' +
+                '<div class="calc-row"><span class="op"></span><span class="label">名義金額</span><span class="val">' + formatCurrencyWithUnit(notional, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">保費折扣</span><span class="val">' + formatCurrencyWithUnit(discountUSD, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">貸款額</span><span class="val">' + formatCurrencyWithUnit(loanUSD, isHKD) + '</span></div>' +
+                '<div class="calc-divider"></div>' +
+                '<div class="calc-row result-row"><span class="op">＝</span><span class="label">本金</span><span class="val">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span></div>' +
+                '</div>';
+
+            document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('calcModal').classList.add('active');
+        }
+
+        function showAnnualInterestDetails() {
+            var isHKD = currentCalcCtx.isHKD;
+            var hedgeUSD = currentCalcCtx.hedgeUSD;
+            var loanUSD = currentCalcCtx.loanUSD;
+            var interestRate = currentCalcCtx.interestRate;
+            var standardInterestUSD = currentCalcCtx.standardInterestUSD;
+            var hedgeInterestUSD = currentCalcCtx.hedgeInterestUSD;
+            var annualInterestUSD = currentCalcCtx.annualInterestUSD;
+            var effectiveStandardLoanUSD = currentCalcCtx.effectiveStandardLoanUSD;
+
+            document.getElementById('modalTitle').innerText = '每年利息算式';
+
+            var html = '<div class="calc-stack">';
+
+            if (hedgeUSD === 0 || hedgeInterestUSD === 0) {
+                html += '<div class="calc-row"><span class="op"></span><span class="label">貸款本金 <span class="calc-subtext">(' + formatCurrencyWithUnit(effectiveStandardLoanUSD, isHKD) + ' × ' + interestRate.toFixed(2) + '%)</span></span><span class="val">' + formatCurrencyWithUnit(standardInterestUSD, isHKD) + '</span></div>' +
+                    '<div class="calc-divider"></div>' +
+                    '<div class="calc-row result-row"><span class="op">＝</span><span class="label">每年利息</span><span class="val">' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + '</span></div>';
+            } else {
+                html += '<div class="calc-row"><span class="op"></span><span class="label">淨貸款利息 <span class="calc-subtext">(' + formatCurrencyWithUnit(effectiveStandardLoanUSD, isHKD) + ' × ' + interestRate.toFixed(2) + '%)</span></span><span class="val">' + formatCurrencyWithUnit(standardInterestUSD, isHKD) + '</span></div>' +
+                    '<div class="calc-row"><span class="op">＋</span><span class="label">對沖戶口利息 <span class="calc-subtext">(' + formatCurrencyWithUnit(hedgeUSD, isHKD) + ' × 2.00%)</span></span><span class="val">' + formatCurrencyWithUnit(hedgeInterestUSD, isHKD) + '</span></div>' +
+                    '<div class="calc-divider"></div>' +
+                    '<div class="calc-row result-row"><span class="op">＝</span><span class="label">每年利息</span><span class="val">' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + '</span></div>';
+            }
+
+            html += '</div>';
+
+            document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('calcModal').classList.add('active');
+        }
+
         function showCSVDetails(year) {
             var isHKD = currentCalcCtx.isHKD;
             var plan = currentCalcCtx.plan;
@@ -1310,8 +1363,14 @@
                 isHKD: isHKD,
                 plan: plan,
                 notional: notional,
+                discountUSD: discountUSD,
                 loanUSD: loanUSD,
                 principalUSD: principalUSD,
+                hedgeUSD: hedgeUSD,
+                interestRate: interestRate,
+                effectiveStandardLoanUSD: effectiveStandardLoanUSD,
+                standardInterestUSD: standardInterestUSD,
+                hedgeInterestUSD: hedgeInterestUSD,
                 annualInterestUSD: annualInterestUSD,
                 annualHandlingFeeUSD: annualHandlingFeeUSD
             };
@@ -1322,11 +1381,13 @@
             document.getElementById('valLoanSub').innerHTML = isHKD ? '(' + formatCurrencyWithUnit(loanUSD, false) + ')' : '(' + formatCurrencyWithUnit(loanUSD, true) + ')';
             document.getElementById('valDiscount').innerHTML = formatCurrencyWithUnit(discountUSD, isHKD);
             document.getElementById('valDiscountPct').innerHTML = '折扣率: ' + (discountRate * 100).toFixed(1) + '%';
-            document.getElementById('valPrincipal').innerHTML = formatCurrencyWithUnit(principalUSD, isHKD);
+            
+            // 將「本金」與「每年利息」改為可點擊彈出 Pop-up 樣式
+            document.getElementById('valPrincipal').innerHTML = '<span class="csv-clickable" style="color:inherit;" onclick="showPrincipalDetails()">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span>';
             document.getElementById('valInterestRate').innerHTML = interestRate.toFixed(2) + '%';
             document.getElementById('valInterestFormula').innerHTML = 'Min(' + (loanHKD < 1000000 ? 'H+1.5%' : 'H+1.35%') + ', ' + (loanHKD < 1000000 ? 'P-0.65%' : 'P-1.0%') + ')';
             document.getElementById('valHandlingFee').innerHTML = formatCurrencyWithUnit(annualHandlingFeeUSD, isHKD);
-            document.getElementById('valAnnualInterest').innerHTML = formatCurrencyWithUnit(annualInterestUSD, isHKD);
+            document.getElementById('valAnnualInterest').innerHTML = '<span class="csv-clickable" onclick="showAnnualInterestDetails()">' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + '</span>';
             document.getElementById('valAnnualInterestSub').innerHTML = annualInterestSubText;
 
             var selectedYears = [];
