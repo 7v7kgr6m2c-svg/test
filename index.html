@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v57)</title>
+    <title>保費融資計算機 (v58)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -803,7 +803,7 @@
                         <input type="number" id="hiborInput" min="0" max="10" step="0.01" value="3.0" oninput="syncRate('hibor', this.value)">
                         <span>%</span>
                     </div>
-                    <div class="rate-fetch-status" id="hiborFetchStatus">正在抓取當月首個工作日 HIBOR...</div>
+                    <div class="rate-fetch-status" id="hiborFetchStatus">正在從香港金管局 (HKMA) 抓取數據...</div>
                 </div>
 
                 <div class="form-group">
@@ -952,7 +952,7 @@
 
         var currentCalcCtx = {};
 
-        // 自動從香港銀行公會擷取當月第一個工作天 1 個月 HIBOR 數據
+        // 【方法一】：使用香港金融管理局 (HKMA) 官方 Open API 獲取當月第一個工作天的 1個月 HIBOR
         async function fetchFirstWorkingDayHibor() {
             var statusEl = document.getElementById('hiborFetchStatus');
             try {
@@ -960,45 +960,37 @@
                 var year = now.getFullYear();
                 var month = String(now.getMonth() + 1).padStart(2, '0');
                 
-                // 構造目標查詢網址（若為當月，取第 1 天起之數據）
-                var targetUrl = 'https://www.hkab.org.hk/tc/rates/hibor?year=' + year + '&month=' + month + '&day=01';
-                var proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(targetUrl);
+                // 設定查詢當月前兩週，確保涵蓋首個工作日
+                var startDate = year + '-' + month + '-01';
+                var endDate = year + '-' + month + '-15';
 
-                var response = await fetch(proxyUrl);
-                if (!response.ok) throw new Error('CORS Proxy 連線失敗');
+                var apiUrl = 'https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/er-ir/hkinterbank-offered-rates?segment=hibor&from=' + startDate + '&to=' + endDate;
+
+                var response = await fetch(apiUrl);
+                if (!response.ok) throw new Error('HKMA API 連線失敗');
+                
                 var data = await response.json();
+                
+                if (data.header && data.header.success && data.result && data.result.records.length > 0) {
+                    var records = data.result.records;
+                    // 金管局數據按日期降序排列 (最新在前)，陣列最後一筆為當月首個工作日
+                    var firstWorkDayRecord = records[records.length - 1]; 
+                    
+                    var rawRate = parseFloat(firstWorkDayRecord.ir_1m);
+                    var recordDate = firstWorkDayRecord.end_of_date;
 
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(data.contents, 'text/html');
-
-                // 尋找表格中「1 個月」到期日的列數據
-                var rows = doc.querySelectorAll('table tr');
-                var foundRate = null;
-
-                for (var r = 0; r < rows.length; r++) {
-                    var text = rows[r].innerText || '';
-                    if (text.includes('1 個月') || text.includes('1 Month')) {
-                        var cells = rows[r].querySelectorAll('td');
-                        if (cells.length >= 2) {
-                            var rawRate = parseFloat(cells[1].innerText.trim());
-                            if (!isNaN(rawRate)) {
-                                foundRate = rawRate;
-                                break;
-                            }
-                        }
+                    if (!isNaN(rawRate)) {
+                        var roundedRate = Math.round(rawRate * 100) / 100;
+                        syncRate('hibor', roundedRate);
+                        statusEl.innerText = '已更新金管局數據 (' + recordDate + ') 1個月 HIBOR: ' + roundedRate.toFixed(2) + '%';
+                        statusEl.style.color = '#00875A';
+                        return;
                     }
                 }
+                throw new Error('未取到有效的 1個月 HIBOR 數據');
 
-                if (foundRate !== null) {
-                    var roundedRate = Math.round(foundRate * 100) / 100;
-                    syncRate('hibor', roundedRate);
-                    statusEl.innerText = '已自動更新當月首工作天 1個月 HIBOR (' + roundedRate.toFixed(2) + '%)';
-                    statusEl.style.color = '#00875A';
-                } else {
-                    throw new Error('未在頁面中定位到 1個月 HIBOR 數據');
-                }
             } catch (err) {
-                console.warn('抓取 HIBOR 失敗，使用預設值:', err);
+                console.warn('金管局 API 讀取失敗:', err);
                 statusEl.innerText = '抓取即時 HIBOR 失敗，請手動調整。';
                 statusEl.style.color = '#DE350B';
             }
@@ -1482,7 +1474,7 @@
         window.onload = function() {
             initYearCheckboxes();
             loadExcelData();
-            fetchFirstWorkingDayHibor(); // 頁面載入時自動連線擷取 HIBOR
+            fetchFirstWorkingDayHibor(); // 開啟程式時自動向金管局 API 請求 HIBOR 數據
 
             var currencyToggleBox = document.getElementById('currencyToggleBox');
             var currencyToggle = document.getElementById('currencyToggle');
