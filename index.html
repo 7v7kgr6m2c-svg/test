@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v52)</title>
+    <title>保費融資計算機 (v53)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -456,6 +456,20 @@
             background-color: #F4F5F7;
         }
 
+        /* 點擊數字的 Pop-up 觸發樣式 */
+        .csv-clickable {
+            color: var(--accent-blue);
+            text-decoration: underline;
+            text-decoration-style: dotted;
+            cursor: pointer;
+            font-weight: 600;
+            transition: color 0.2s;
+        }
+
+        .csv-clickable:hover {
+            color: #00388D;
+        }
+
         .mobile-only {
             display: none;
         }
@@ -564,6 +578,112 @@
         .info-icon.active .tooltip {
             visibility: visible;
             opacity: 1;
+        }
+
+        /* Modal Pop-up 視窗樣式 */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(9, 30, 66, 0.54);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-card {
+            background: #FFFFFF;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 360px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+            overflow: hidden;
+            animation: slideUp 0.25s ease;
+        }
+
+        .modal-header {
+            background: var(--bg-color);
+            padding: 14px 18px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-header h3 {
+            font-size: 16px;
+            color: var(--text-color);
+            font-weight: 700;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 20px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 0 4px;
+            line-height: 1;
+        }
+
+        .modal-body {
+            padding: 16px 18px;
+        }
+
+        .modal-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px dashed var(--border-color);
+        }
+
+        .modal-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .modal-row.total-row {
+            border-top: 2px solid var(--border-color);
+            margin-top: 6px;
+            padding-top: 12px;
+            font-weight: 700;
+        }
+
+        .modal-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .modal-value {
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .modal-row.total-row .modal-label,
+        .modal-row.total-row .modal-value {
+            color: var(--primary-color);
+            font-size: 16px;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(15px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
         }
 
         .positive {
@@ -769,11 +889,36 @@
         </div>
     </div>
 
+    <!-- Pop-up 彈出視窗（Modal） -->
+    <div class="modal-overlay" id="csvModal" onclick="closeModalOnOverlay(event)">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 id="modalTitle">第 X 年退保價值分析</h3>
+                <button type="button" class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-row">
+                    <span class="modal-label">保證現金價值</span>
+                    <span class="modal-value" id="modalGuaranteed">-</span>
+                </div>
+                <div class="modal-row">
+                    <span class="modal-label">終期紅利</span>
+                    <span class="modal-value" id="modalTerminal">-</span>
+                </div>
+                <div class="modal-row total-row">
+                    <span class="modal-label">退保價值總額</span>
+                    <span class="modal-value" id="modalTotal">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="disclaimer">
         * 免責聲明：本計算機所有數據與計算結果僅供個人使用及參考，不構成任何投資建議、要約或最終保單條款。
     </div>
 
     <script>
+        // 修改結構：儲存 total, guaranteed, terminal
         var totalCSVTable = {
             "PA": {},
             "FA": {}
@@ -821,6 +966,8 @@
                 var headerRow = jsonData[0];
                 var yearColIdx = 0;
                 var totalCsvColIdx = headerRow.length - 1;
+                var guaranteedColIdx = -1;
+                var terminalColIdx = -1;
 
                 for (var c = 0; c < headerRow.length; c++) {
                     var cellText = String(headerRow[c] || '');
@@ -829,6 +976,12 @@
                     }
                     if (cellText.includes('退保價值總額')) {
                         totalCsvColIdx = c;
+                    }
+                    if (cellText.includes('保證') && cellText.includes('現金')) {
+                        guaranteedColIdx = c;
+                    }
+                    if (cellText.includes('終期') || cellText.includes('紅利') || cellText.includes('非保證')) {
+                        terminalColIdx = c;
                     }
                 }
 
@@ -842,9 +995,18 @@
 
                     var yearVal = parseInt(row[yearColIdx]);
                     var csvVal = parseFloat(row[totalCsvColIdx]);
+                    var gVal = guaranteedColIdx !== -1 ? parseFloat(row[guaranteedColIdx]) : NaN;
+                    var tVal = terminalColIdx !== -1 ? parseFloat(row[terminalColIdx]) : NaN;
 
                     if (!isNaN(yearVal) && !isNaN(csvVal)) {
-                        totalCSVTable[planKey][notionalKey][yearVal] = csvVal;
+                        var guaranteed = !isNaN(gVal) ? gVal : (csvVal * 0.7); // 備用估算 logic 預防
+                        var terminal = !isNaN(tVal) ? tVal : Math.max(0, csvVal - guaranteed);
+
+                        totalCSVTable[planKey][notionalKey][yearVal] = {
+                            total: csvVal,
+                            guaranteed: guaranteed,
+                            terminal: terminal
+                        };
                     }
                 }
             });
@@ -965,6 +1127,37 @@
             return val.toLocaleString('en-US');
         }
 
+        // 開啟 Pop-up 功能
+        function showCSVDetails(year) {
+            var isHKD = document.getElementById('currencyToggle').checked;
+            var plan = document.getElementById('planSelect').value;
+            var notional = Math.round(parseFloat(document.getElementById('notionalSelect').value));
+
+            var yearData = totalCSVTable[plan][notional][year];
+            if (!yearData) return;
+
+            var guaranteedUSD = yearData.guaranteed;
+            var terminalUSD = yearData.terminal;
+            var totalUSD = yearData.total;
+
+            document.getElementById('modalTitle').innerText = '第 ' + year + ' 年退保價值分析';
+            document.getElementById('modalGuaranteed').innerText = formatCurrencyWithUnit(guaranteedUSD, isHKD);
+            document.getElementById('modalTerminal').innerText = formatCurrencyWithUnit(terminalUSD, isHKD);
+            document.getElementById('modalTotal').innerText = formatCurrencyWithUnit(totalUSD, isHKD);
+
+            document.getElementById('csvModal').classList.add('active');
+        }
+
+        function closeModal() {
+            document.getElementById('csvModal').classList.remove('active');
+        }
+
+        function closeModalOnOverlay(event) {
+            if (event.target.id === 'csvModal') {
+                closeModal();
+            }
+        }
+
         function calculate() {
             var isHKD = document.getElementById('currencyToggle').checked;
             
@@ -981,7 +1174,8 @@
 
             if (!notional || !totalCSVTable[plan] || !totalCSVTable[plan][notional]) return;
 
-            var firstDayCSV = Math.round(totalCSVTable[plan][notional][1] || 0);
+            var firstDayObj = totalCSVTable[plan][notional][1];
+            var firstDayCSV = Math.round(firstDayObj ? firstDayObj.total : 0);
             var loanUSD = Math.round(firstDayCSV * 0.95);
             var loanHKD = Math.round(loanUSD * 7.8);
 
@@ -1070,13 +1264,14 @@
 
             for (var k = 0; k < selectedYears.length; k++) {
                 var year = selectedYears[k];
-                var totalCSV = Math.round(totalCSVTable[plan][notional][year] || 0);
+                var yearObj = totalCSVTable[plan][notional][year];
+                var totalCSV = Math.round(yearObj ? yearObj.total : 0);
                 var actualNetReceive = Math.round(totalCSV - loanUSD);
                 var netProfit = Math.round(actualNetReceive - principalUSD - (annualInterestUSD * year) - (annualHandlingFeeUSD * year));
 
                 var tr = document.createElement('tr');
                 tr.innerHTML = '<td>第 ' + year + ' 年</td>' +
-                    '<td>' + formatTableNum(totalCSV, isHKD) + '</td>' +
+                    '<td><span class="csv-clickable" onclick="showCSVDetails(' + year + ')">' + formatTableNum(totalCSV, isHKD) + '</span></td>' +
                     '<td>' + formatTableNum(actualNetReceive, isHKD) + '</td>' +
                     '<td class="' + (netProfit >= 0 ? 'positive' : 'negative') + '">' + formatTableNum(netProfit, isHKD) + '</td>';
                 tbody.appendChild(tr);
