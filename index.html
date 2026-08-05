@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v58)</title>
+    <title>保費融資計算機 (v59)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -803,7 +803,7 @@
                         <input type="number" id="hiborInput" min="0" max="10" step="0.01" value="3.0" oninput="syncRate('hibor', this.value)">
                         <span>%</span>
                     </div>
-                    <div class="rate-fetch-status" id="hiborFetchStatus">正在從香港金管局 (HKMA) 抓取數據...</div>
+                    <div class="rate-fetch-status" id="hiborFetchStatus">正在連接香港金管局 (HKMA) 數據庫...</div>
                 </div>
 
                 <div class="form-group">
@@ -952,7 +952,7 @@
 
         var currentCalcCtx = {};
 
-        // 【方法一】：使用香港金融管理局 (HKMA) 官方 Open API 獲取當月第一個工作天的 1個月 HIBOR
+        // 增強型：自動獲取當月首個工作天 1個月 HIBOR（支援多重代理與欄位自動相容）
         async function fetchFirstWorkingDayHibor() {
             var statusEl = document.getElementById('hiborFetchStatus');
             try {
@@ -960,37 +960,64 @@
                 var year = now.getFullYear();
                 var month = String(now.getMonth() + 1).padStart(2, '0');
                 
-                // 設定查詢當月前兩週，確保涵蓋首個工作日
                 var startDate = year + '-' + month + '-01';
                 var endDate = year + '-' + month + '-15';
 
-                var apiUrl = 'https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/er-ir/hkinterbank-offered-rates?segment=hibor&from=' + startDate + '&to=' + endDate;
+                var directApiUrl = 'https://api.hkma.gov.hk/public/market-data-and-statistics/monthly-statistical-bulletin/er-ir/hkinterbank-offered-rates?segment=hibor&from=' + startDate + '&to=' + endDate;
 
-                var response = await fetch(apiUrl);
-                if (!response.ok) throw new Error('HKMA API 連線失敗');
-                
-                var data = await response.json();
-                
-                if (data.header && data.header.success && data.result && data.result.records.length > 0) {
-                    var records = data.result.records;
-                    // 金管局數據按日期降序排列 (最新在前)，陣列最後一筆為當月首個工作日
-                    var firstWorkDayRecord = records[records.length - 1]; 
-                    
-                    var rawRate = parseFloat(firstWorkDayRecord.ir_1m);
-                    var recordDate = firstWorkDayRecord.end_of_date;
+                // 多重請求嘗試途徑（直連金管局 -> 多個備援 Proxy）
+                var requestUrls = [
+                    directApiUrl,
+                    'https://api.allorigins.win/raw?url=' + encodeURIComponent(directApiUrl),
+                    'https://corsproxy.io/?' + encodeURIComponent(directApiUrl),
+                    'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(directApiUrl)
+                ];
+
+                var rawJsonData = null;
+
+                for (var i = 0; i < requestUrls.length; i++) {
+                    try {
+                        var res = await fetch(requestUrls[i]);
+                        if (res.ok) {
+                            rawJsonData = await res.json();
+                            if (rawJsonData && (rawJsonData.result || rawJsonData.records)) break;
+                        }
+                    } catch (e) {
+                        console.warn('連結途徑 ' + (i + 1) + ' 嘗試失敗，嘗試下一個...');
+                    }
+                }
+
+                if (!rawJsonData) throw new Error('所有數據途徑均無法連線');
+
+                var records = (rawJsonData.result && rawJsonData.result.records) ? rawJsonData.result.records : rawJsonData.records;
+
+                if (records && records.length > 0) {
+                    // 按日期升序排列，確保陣列第一筆為當月首個工作日
+                    records.sort(function(a, b) {
+                        var dateA = a.end_of_date || a.date || '';
+                        var dateB = b.end_of_date || b.date || '';
+                        return dateA.localeCompare(dateB);
+                    });
+
+                    var firstRecord = records[0];
+                    // 相容金管局不同的欄位命名
+                    var rawVal = firstRecord.ir_1m || firstRecord.hibor_1m || firstRecord.ir_1mth || firstRecord['1m'];
+                    var recordDate = firstRecord.end_of_date || firstRecord.date || startDate;
+
+                    var rawRate = parseFloat(rawVal);
 
                     if (!isNaN(rawRate)) {
                         var roundedRate = Math.round(rawRate * 100) / 100;
                         syncRate('hibor', roundedRate);
-                        statusEl.innerText = '已更新金管局數據 (' + recordDate + ') 1個月 HIBOR: ' + roundedRate.toFixed(2) + '%';
+                        statusEl.innerText = '已自動更新 (' + recordDate + ') 1個月 HIBOR: ' + roundedRate.toFixed(2) + '%';
                         statusEl.style.color = '#00875A';
                         return;
                     }
                 }
-                throw new Error('未取到有效的 1個月 HIBOR 數據');
+                throw new Error('未發現有效的 1個月 HIBOR 數據');
 
             } catch (err) {
-                console.warn('金管局 API 讀取失敗:', err);
+                console.warn('HIBOR 自動擷取失敗:', err);
                 statusEl.innerText = '抓取即時 HIBOR 失敗，請手動調整。';
                 statusEl.style.color = '#DE350B';
             }
@@ -1474,7 +1501,7 @@
         window.onload = function() {
             initYearCheckboxes();
             loadExcelData();
-            fetchFirstWorkingDayHibor(); // 開啟程式時自動向金管局 API 請求 HIBOR 數據
+            fetchFirstWorkingDayHibor(); // 開啟時嘗試抓取 HIBOR
 
             var currencyToggleBox = document.getElementById('currencyToggleBox');
             var currencyToggle = document.getElementById('currencyToggle');
