@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v53)</title>
+    <title>保費融資計算機 (v54)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -580,7 +580,7 @@
             opacity: 1;
         }
 
-        /* Modal Pop-up 視窗樣式 */
+        /* Modal Pop-up 視窗通用樣式 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -604,7 +604,7 @@
             background: #FFFFFF;
             border-radius: 12px;
             width: 100%;
-            max-width: 360px;
+            max-width: 380px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
             overflow: hidden;
             animation: slideUp 0.25s ease;
@@ -639,41 +639,61 @@
             padding: 16px 18px;
         }
 
-        .modal-row {
+        /* 直式算式樣式 */
+        .calc-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .calc-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px dashed var(--border-color);
-        }
-
-        .modal-row:last-child {
-            border-bottom: none;
-            padding-bottom: 0;
-        }
-
-        .modal-row.total-row {
-            border-top: 2px solid var(--border-color);
-            margin-top: 6px;
-            padding-top: 12px;
-            font-weight: 700;
-        }
-
-        .modal-label {
             font-size: 14px;
+        }
+
+        .calc-row .op {
+            width: 20px;
+            font-weight: bold;
             color: var(--text-secondary);
         }
 
-        .modal-value {
-            font-size: 15px;
+        .calc-row .label {
+            flex: 1;
+            color: var(--text-secondary);
+        }
+
+        .calc-row .val {
             font-weight: 600;
             color: var(--text-color);
         }
 
-        .modal-row.total-row .modal-label,
-        .modal-row.total-row .modal-value {
-            color: var(--primary-color);
+        .calc-row.subtext-row {
+            font-size: 12px;
+            color: var(--text-secondary);
+            padding-left: 20px;
+            margin-top: -4px;
+        }
+
+        .calc-divider {
+            border-top: 2px solid var(--border-color);
+            margin: 6px 0;
+        }
+
+        .calc-row.result-row {
             font-size: 16px;
+            font-weight: 700;
+            padding-top: 4px;
+        }
+
+        .calc-row.result-row.positive .val {
+            color: #00875A;
+        }
+
+        .calc-row.result-row.negative .val {
+            color: #DE350B;
         }
 
         @keyframes fadeIn {
@@ -889,26 +909,14 @@
         </div>
     </div>
 
-    <!-- Pop-up 彈出視窗（Modal） -->
-    <div class="modal-overlay" id="csvModal" onclick="closeModalOnOverlay(event)">
+    <!-- 通用 Modal Pop-up 視窗 -->
+    <div class="modal-overlay" id="calcModal" onclick="closeModalOnOverlay(event)">
         <div class="modal-card">
             <div class="modal-header">
-                <h3 id="modalTitle">第 X 年退保價值分析</h3>
+                <h3 id="modalTitle">計算算式</h3>
                 <button type="button" class="modal-close" onclick="closeModal()">&times;</button>
             </div>
-            <div class="modal-body">
-                <div class="modal-row">
-                    <span class="modal-label">保證現金價值</span>
-                    <span class="modal-value" id="modalGuaranteed">-</span>
-                </div>
-                <div class="modal-row">
-                    <span class="modal-label">終期紅利</span>
-                    <span class="modal-value" id="modalTerminal">-</span>
-                </div>
-                <div class="modal-row total-row">
-                    <span class="modal-label">退保價值總額</span>
-                    <span class="modal-value" id="modalTotal">-</span>
-                </div>
+            <div class="modal-body" id="modalBody">
             </div>
         </div>
     </div>
@@ -918,7 +926,6 @@
     </div>
 
     <script>
-        // 修改結構：儲存 total, guaranteed, terminal
         var totalCSVTable = {
             "PA": {},
             "FA": {}
@@ -930,6 +937,9 @@
         };
 
         var defaultYears = [10, 11, 12, 13, 14, 15, 20];
+
+        // 全局暫存計算數據以供 Pop-up 使用
+        var currentCalcCtx = {};
 
         async function loadExcelData() {
             var statusEl = document.getElementById('loadingStatus');
@@ -999,7 +1009,7 @@
                     var tVal = terminalColIdx !== -1 ? parseFloat(row[terminalColIdx]) : NaN;
 
                     if (!isNaN(yearVal) && !isNaN(csvVal)) {
-                        var guaranteed = !isNaN(gVal) ? gVal : (csvVal * 0.7); // 備用估算 logic 預防
+                        var guaranteed = !isNaN(gVal) ? gVal : (csvVal * 0.7);
                         var terminal = !isNaN(tVal) ? tVal : Math.max(0, csvVal - guaranteed);
 
                         totalCSVTable[planKey][notionalKey][yearVal] = {
@@ -1127,33 +1137,96 @@
             return val.toLocaleString('en-US');
         }
 
-        // 開啟 Pop-up 功能
+        // 開啟不同類型的 Pop-up
         function showCSVDetails(year) {
-            var isHKD = document.getElementById('currencyToggle').checked;
-            var plan = document.getElementById('planSelect').value;
-            var notional = Math.round(parseFloat(document.getElementById('notionalSelect').value));
+            var isHKD = currentCalcCtx.isHKD;
+            var plan = currentCalcCtx.plan;
+            var notional = currentCalcCtx.notional;
 
             var yearData = totalCSVTable[plan][notional][year];
             if (!yearData) return;
 
-            var guaranteedUSD = yearData.guaranteed;
-            var terminalUSD = yearData.terminal;
-            var totalUSD = yearData.total;
+            document.getElementById('modalTitle').innerText = '第 ' + year + ' 年：退保價值總額';
+            
+            var html = '<div class="calc-stack">' +
+                '<div class="calc-row"><span class="op"></span><span class="label">保證現金價值</span><span class="val">' + formatCurrencyWithUnit(yearData.guaranteed, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">＋</span><span class="label">終期紅利</span><span class="val">' + formatCurrencyWithUnit(yearData.terminal, isHKD) + '</span></div>' +
+                '<div class="calc-divider"></div>' +
+                '<div class="calc-row result-row"><span class="op">＝</span><span class="label">退保價值總額</span><span class="val">' + formatCurrencyWithUnit(yearData.total, isHKD) + '</span></div>' +
+                '</div>';
 
-            document.getElementById('modalTitle').innerText = '第 ' + year + ' 年退保價值分析';
-            document.getElementById('modalGuaranteed').innerText = formatCurrencyWithUnit(guaranteedUSD, isHKD);
-            document.getElementById('modalTerminal').innerText = formatCurrencyWithUnit(terminalUSD, isHKD);
-            document.getElementById('modalTotal').innerText = formatCurrencyWithUnit(totalUSD, isHKD);
+            document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('calcModal').classList.add('active');
+        }
 
-            document.getElementById('csvModal').classList.add('active');
+        function showActualReceiveDetails(year) {
+            var isHKD = currentCalcCtx.isHKD;
+            var plan = currentCalcCtx.plan;
+            var notional = currentCalcCtx.notional;
+            var loanUSD = currentCalcCtx.loanUSD;
+
+            var yearData = totalCSVTable[plan][notional][year];
+            if (!yearData) return;
+
+            var totalCSV = yearData.total;
+            var actualReceive = totalCSV - loanUSD;
+
+            document.getElementById('modalTitle').innerText = '第 ' + year + ' 年：實際取回算式';
+
+            var html = '<div class="calc-stack">' +
+                '<div class="calc-row"><span class="op"></span><span class="label">退保價值總額</span><span class="val">' + formatCurrencyWithUnit(totalCSV, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">貸款額</span><span class="val">' + formatCurrencyWithUnit(loanUSD, isHKD) + '</span></div>' +
+                '<div class="calc-divider"></div>' +
+                '<div class="calc-row result-row"><span class="op">＝</span><span class="label">實際取回</span><span class="val">' + formatCurrencyWithUnit(actualReceive, isHKD) + '</span></div>' +
+                '</div>';
+
+            document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('calcModal').classList.add('active');
+        }
+
+        function showNetProfitDetails(year) {
+            var isHKD = currentCalcCtx.isHKD;
+            var plan = currentCalcCtx.plan;
+            var notional = currentCalcCtx.notional;
+            var loanUSD = currentCalcCtx.loanUSD;
+            var principalUSD = currentCalcCtx.principalUSD;
+            var annualInterestUSD = currentCalcCtx.annualInterestUSD;
+            var annualHandlingFeeUSD = currentCalcCtx.annualHandlingFeeUSD;
+
+            var yearData = totalCSVTable[plan][notional][year];
+            if (!yearData) return;
+
+            var totalCSV = yearData.total;
+            var actualReceive = totalCSV - loanUSD;
+            var totalInterest = annualInterestUSD * year;
+            var totalFee = annualHandlingFeeUSD * year;
+            var netProfit = actualReceive - principalUSD - totalInterest - totalFee;
+
+            var isPos = netProfit >= 0;
+
+            document.getElementById('modalTitle').innerText = '第 ' + year + ' 年：淨賺/虧損算式';
+
+            var html = '<div class="calc-stack">' +
+                '<div class="calc-row"><span class="op"></span><span class="label">實際取回</span><span class="val">' + formatCurrencyWithUnit(actualReceive, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">本金</span><span class="val">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">總利息</span><span class="val">' + formatCurrencyWithUnit(totalInterest, isHKD) + '</span></div>' +
+                '<div class="calc-row subtext-row"><span>(' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + ' × ' + year + '年)</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">總手續費</span><span class="val">' + formatCurrencyWithUnit(totalFee, isHKD) + '</span></div>' +
+                '<div class="calc-row subtext-row"><span>(' + formatCurrencyWithUnit(annualHandlingFeeUSD, isHKD) + ' × ' + year + '年)</span></div>' +
+                '<div class="calc-divider"></div>' +
+                '<div class="calc-row result-row ' + (isPos ? 'positive' : 'negative') + '"><span class="op">＝</span><span class="label">淨賺 / 虧損</span><span class="val">' + formatCurrencyWithUnit(netProfit, isHKD) + '</span></div>' +
+                '</div>';
+
+            document.getElementById('modalBody').innerHTML = html;
+            document.getElementById('calcModal').classList.add('active');
         }
 
         function closeModal() {
-            document.getElementById('csvModal').classList.remove('active');
+            document.getElementById('calcModal').classList.remove('active');
         }
 
         function closeModalOnOverlay(event) {
-            if (event.target.id === 'csvModal') {
+            if (event.target.id === 'calcModal') {
                 closeModal();
             }
         }
@@ -1232,6 +1305,17 @@
             var standardInterestUSD = Math.round(effectiveStandardLoanUSD * (interestRate / 100));
             var annualInterestUSD = standardInterestUSD + hedgeInterestUSD;
 
+            // 儲存全局計算上下文
+            currentCalcCtx = {
+                isHKD: isHKD,
+                plan: plan,
+                notional: notional,
+                loanUSD: loanUSD,
+                principalUSD: principalUSD,
+                annualInterestUSD: annualInterestUSD,
+                annualHandlingFeeUSD: annualHandlingFeeUSD
+            };
+
             document.getElementById('valLeverageRatio').innerHTML = leverageRatio;
             document.getElementById('valFirstDay').innerHTML = formatCurrencyWithUnit(firstDayCSV, isHKD);
             document.getElementById('valLoan').innerHTML = formatCurrencyWithUnit(loanUSD, isHKD);
@@ -1272,8 +1356,8 @@
                 var tr = document.createElement('tr');
                 tr.innerHTML = '<td>第 ' + year + ' 年</td>' +
                     '<td><span class="csv-clickable" onclick="showCSVDetails(' + year + ')">' + formatTableNum(totalCSV, isHKD) + '</span></td>' +
-                    '<td>' + formatTableNum(actualNetReceive, isHKD) + '</td>' +
-                    '<td class="' + (netProfit >= 0 ? 'positive' : 'negative') + '">' + formatTableNum(netProfit, isHKD) + '</td>';
+                    '<td><span class="csv-clickable" onclick="showActualReceiveDetails(' + year + ')">' + formatTableNum(actualNetReceive, isHKD) + '</span></td>' +
+                    '<td class="' + (netProfit >= 0 ? 'positive' : 'negative') + '"><span class="csv-clickable" style="color:inherit;" onclick="showNetProfitDetails(' + year + ')">' + formatTableNum(netProfit, isHKD) + '</span></td>';
                 tbody.appendChild(tr);
             }
         }
