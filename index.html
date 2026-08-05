@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v54)</title>
+    <title>保費融資計算機 (v55)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -456,7 +456,6 @@
             background-color: #F4F5F7;
         }
 
-        /* 點擊數字的 Pop-up 觸發樣式 */
         .csv-clickable {
             color: var(--accent-blue);
             text-decoration: underline;
@@ -604,7 +603,7 @@
             background: #FFFFFF;
             border-radius: 12px;
             width: 100%;
-            max-width: 380px;
+            max-width: 420px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
             overflow: hidden;
             animation: slideUp 0.25s ease;
@@ -643,7 +642,7 @@
         .calc-stack {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 8px;
             font-variant-numeric: tabular-nums;
         }
 
@@ -655,26 +654,32 @@
         }
 
         .calc-row .op {
-            width: 20px;
+            width: 18px;
             font-weight: bold;
             color: var(--text-secondary);
+            flex-shrink: 0;
         }
 
         .calc-row .label {
             flex: 1;
             color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 2px 4px;
+        }
+
+        .calc-subtext {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: normal;
         }
 
         .calc-row .val {
             font-weight: 600;
             color: var(--text-color);
-        }
-
-        .calc-row.subtext-row {
-            font-size: 12px;
-            color: var(--text-secondary);
-            padding-left: 20px;
-            margin-top: -4px;
+            margin-left: 8px;
+            flex-shrink: 0;
         }
 
         .calc-divider {
@@ -938,7 +943,6 @@
 
         var defaultYears = [10, 11, 12, 13, 14, 15, 20];
 
-        // 全局暫存計算數據以供 Pop-up 使用
         var currentCalcCtx = {};
 
         async function loadExcelData() {
@@ -1137,7 +1141,6 @@
             return val.toLocaleString('en-US');
         }
 
-        // 開啟不同類型的 Pop-up
         function showCSVDetails(year) {
             var isHKD = currentCalcCtx.isHKD;
             var plan = currentCalcCtx.plan;
@@ -1209,10 +1212,8 @@
             var html = '<div class="calc-stack">' +
                 '<div class="calc-row"><span class="op"></span><span class="label">實際取回</span><span class="val">' + formatCurrencyWithUnit(actualReceive, isHKD) + '</span></div>' +
                 '<div class="calc-row"><span class="op">－</span><span class="label">本金</span><span class="val">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span></div>' +
-                '<div class="calc-row"><span class="op">－</span><span class="label">總利息</span><span class="val">' + formatCurrencyWithUnit(totalInterest, isHKD) + '</span></div>' +
-                '<div class="calc-row subtext-row"><span>(' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + ' × ' + year + '年)</span></div>' +
-                '<div class="calc-row"><span class="op">－</span><span class="label">總手續費</span><span class="val">' + formatCurrencyWithUnit(totalFee, isHKD) + '</span></div>' +
-                '<div class="calc-row subtext-row"><span>(' + formatCurrencyWithUnit(annualHandlingFeeUSD, isHKD) + ' × ' + year + '年)</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">總利息 <span class="calc-subtext">(' + formatCurrencyWithUnit(annualInterestUSD, isHKD) + ' × ' + year + '年)</span></span><span class="val">' + formatCurrencyWithUnit(totalInterest, isHKD) + '</span></div>' +
+                '<div class="calc-row"><span class="op">－</span><span class="label">總手續費 <span class="calc-subtext">(' + formatCurrencyWithUnit(annualHandlingFeeUSD, isHKD) + ' × ' + year + '年)</span></span><span class="val">' + formatCurrencyWithUnit(totalFee, isHKD) + '</span></div>' +
                 '<div class="calc-divider"></div>' +
                 '<div class="calc-row result-row ' + (isPos ? 'positive' : 'negative') + '"><span class="op">＝</span><span class="label">淨賺 / 虧損</span><span class="val">' + formatCurrencyWithUnit(netProfit, isHKD) + '</span></div>' +
                 '</div>';
@@ -1305,7 +1306,6 @@
             var standardInterestUSD = Math.round(effectiveStandardLoanUSD * (interestRate / 100));
             var annualInterestUSD = standardInterestUSD + hedgeInterestUSD;
 
-            // 儲存全局計算上下文
             currentCalcCtx = {
                 isHKD: isHKD,
                 plan: plan,
