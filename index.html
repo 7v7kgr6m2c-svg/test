@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v56)</title>
+    <title>保費融資計算機 (v57)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -737,6 +737,15 @@
             padding: 10px;
             font-weight: bold;
         }
+
+        .hibor-status-tag {
+            font-size: 11px;
+            margin-top: 4px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
     </style>
 </head>
 <body>
@@ -745,7 +754,7 @@
         <h1>保費融資計算機</h1>
     </div>
 
-    <div id="loadingStatus">正在讀取 Excel 計劃數據中...</div>
+    <div id="loadingStatus">正在讀取 Excel 數據及自動獲取最新 HIBOR 數據...</div>
 
     <div class="card">
         <form id="calcForm" onsubmit="return false;">
@@ -797,6 +806,7 @@
                         <input type="number" id="hiborInput" min="0" max="10" step="0.01" value="3.0" oninput="syncRate('hibor', this.value)">
                         <span>%</span>
                     </div>
+                    <div class="hibor-status-tag" id="hiborFetchStatus">⚡ 自動載入中...</div>
                 </div>
 
                 <div class="form-group">
@@ -944,6 +954,64 @@
         var defaultYears = [10, 11, 12, 13, 14, 15, 20];
 
         var currentCalcCtx = {};
+
+        // 自動獲取香港銀行公會（HKAB）首個工作天 1 個月 HIBOR Rate
+        async function fetchFirstWorkdayHibor() {
+            var statusTag = document.getElementById('hiborFetchStatus');
+            try {
+                var now = new Date();
+                var year = now.getFullYear();
+                var month = String(now.getMonth() + 1).padStart(2, '0');
+                
+                // 組合當月 1 號的日期 (格式: YYYY-MM-01)
+                var targetDateStr = year + '-' + month + '-01';
+                
+                // 使用 AllOrigins CORS 代理存取 HKAB 網頁數據
+                var hkabUrl = 'https://www.hkab.org.hk/tc/rates/hibor?year=' + year + '&month=' + parseInt(month, 10);
+                var proxyUrl = 'https://api.allorigins.win/get?url=' + encodeURIComponent(hkabUrl);
+
+                var response = await fetch(proxyUrl);
+                if (!response.ok) throw new Error('CORS 代理存取失敗');
+                
+                var json = await response.json();
+                var htmlText = json.contents;
+
+                // 解析 HTML
+                var parser = new DOMParser();
+                var doc = parser.parseFromString(htmlText, 'text/html');
+
+                // 搜尋網頁表格中「1 個月」/「1 個月/1 Month」對應的「港元利息結算率」
+                var tableRows = doc.querySelectorAll('table tr');
+                var hiborRate = null;
+                var foundDate = '';
+
+                tableRows.forEach(function(row) {
+                    var text = row.innerText || '';
+                    if (text.includes('1 個月') || text.includes('1 Month')) {
+                        var cols = row.querySelectorAll('td');
+                        cols.forEach(function(col) {
+                            var val = parseFloat(col.innerText.trim());
+                            if (!isNaN(val) && val > 0 && val < 20) {
+                                hiborRate = val;
+                            }
+                        });
+                    }
+                });
+
+                if (hiborRate !== null) {
+                    syncRate('hibor', hiborRate);
+                    statusTag.style.color = '#00875A';
+                    statusTag.innerHTML = '✔ 已自動更新當月首個工作天 HIBOR (' + hiborRate.toFixed(2) + '%)';
+                } else {
+                    statusTag.style.color = '#5E6C84';
+                    statusTag.innerHTML = 'ℹ️ 採用預設 HIBOR';
+                }
+            } catch (err) {
+                console.warn('獲取 HIBOR Rate 失敗，將保持預設值:', err);
+                statusTag.style.color = '#DE350B';
+                statusTag.innerHTML = '⚠️ 自動讀取失敗，使用預設 HIBOR';
+            }
+        }
 
         async function loadExcelData() {
             var statusEl = document.getElementById('loadingStatus');
@@ -1141,7 +1209,6 @@
             return val.toLocaleString('en-US');
         }
 
-        // 開啟 Pop-up 算式細節
         function showPrincipalDetails() {
             var isHKD = currentCalcCtx.isHKD;
             var notional = currentCalcCtx.notional;
@@ -1382,7 +1449,6 @@
             document.getElementById('valDiscount').innerHTML = formatCurrencyWithUnit(discountUSD, isHKD);
             document.getElementById('valDiscountPct').innerHTML = '折扣率: ' + (discountRate * 100).toFixed(1) + '%';
             
-            // 將「本金」與「每年利息」改為可點擊彈出 Pop-up 樣式
             document.getElementById('valPrincipal').innerHTML = '<span class="csv-clickable" style="color:inherit;" onclick="showPrincipalDetails()">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span>';
             document.getElementById('valInterestRate').innerHTML = interestRate.toFixed(2) + '%';
             document.getElementById('valInterestFormula').innerHTML = 'Min(' + (loanHKD < 1000000 ? 'H+1.5%' : 'H+1.35%') + ', ' + (loanHKD < 1000000 ? 'P-0.65%' : 'P-1.0%') + ')';
@@ -1426,6 +1492,7 @@
         window.onload = function() {
             initYearCheckboxes();
             loadExcelData();
+            fetchFirstWorkdayHibor(); // 開啟網頁時自動抓取最新當月首工作天 1 個月 HIBOR
 
             var currencyToggleBox = document.getElementById('currencyToggleBox');
             var currencyToggle = document.getElementById('currencyToggle');
