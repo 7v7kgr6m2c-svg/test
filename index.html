@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>保費融資計算機 (v60)</title>
+    <title>保費融資計算機 (v58)</title>
     <!-- 引入 SheetJS 用於讀取 Excel 檔案 -->
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
@@ -737,12 +737,6 @@
             padding: 10px;
             font-weight: bold;
         }
-        
-        .rate-fetch-status {
-            font-size: 11px;
-            color: var(--text-secondary);
-            margin-top: 2px;
-        }
     </style>
 </head>
 <body>
@@ -751,7 +745,7 @@
         <h1>保費融資計算機</h1>
     </div>
 
-    <div id="loadingStatus">正在讀取數據中...</div>
+    <div id="loadingStatus">正在讀取 Excel 計劃數據中...</div>
 
     <div class="card">
         <form id="calcForm" onsubmit="return false;">
@@ -798,12 +792,11 @@
                     <label for="hiborSlider">4. HIBOR Rate (H)</label>
                     <div class="slider-container">
                         <button type="button" class="step-btn" data-type="hibor" data-delta="-0.01">-</button>
-                        <input type="range" id="hiborSlider" min="0" max="10" step="0.01" value="3.0" oninput="syncRate('hibor', this.value)">
+                        <input type="range" id="hiborSlider" min="0" max="10" step="0.01" value="2.66" oninput="syncRate('hibor', this.value)">
                         <button type="button" class="step-btn" data-type="hibor" data-delta="0.01">+</button>
-                        <input type="number" id="hiborInput" min="0" max="10" step="0.01" value="3.0" oninput="syncRate('hibor', this.value)">
+                        <input type="number" id="hiborInput" min="0" max="10" step="0.01" value="2.66" oninput="syncRate('hibor', this.value)">
                         <span>%</span>
                     </div>
-                    <div class="rate-fetch-status" id="hiborFetchStatus">正在檢查本地 hibor.json...</div>
                 </div>
 
                 <div class="form-group">
@@ -952,25 +945,27 @@
 
         var currentCalcCtx = {};
 
-        // 讀取由本地 Node.js 腳本 (update_hibor.js) 生成的 hibor.json
-        async function fetchFirstWorkingDayHibor() {
-            var statusEl = document.getElementById('hiborFetchStatus');
-            try {
-                var response = await fetch('./hibor.json');
-                if (!response.ok) throw new Error('找不到 hibor.json');
-                
-                var data = await response.json();
-                if (data && typeof data.rate === 'number') {
-                    syncRate('hibor', data.rate);
-                    statusEl.innerText = '已更新本地數據 (' + data.date + ') 1個月 HIBOR: ' + data.rate.toFixed(2) + '%';
-                    statusEl.style.color = '#00875A';
-                    return;
+        // 智能自動取得當月或最近可用首個工作日 HIBOR 數據
+        function getAutoHiborRate() {
+            var hiborHistory = {
+                "2026-08": 2.66
+                // 後續如有新月份數據可直接在此擴充，格式為 "YYYY-MM": 利率
+            };
+
+            var now = new Date();
+            var year = now.getFullYear();
+            var month = now.getMonth() + 1;
+            var key = year + '-' + (month < 10 ? '0' + month : month);
+
+            if (hiborHistory[key] !== undefined) {
+                return hiborHistory[key];
+            } else {
+                // 若當月未開始或未有數據，自動回退至最近一個已記錄月份的數據
+                var keys = Object.keys(hiborHistory).sort().reverse();
+                if (keys.length > 0) {
+                    return hiborHistory[keys[0]];
                 }
-                throw new Error('hibor.json 格式不正確');
-            } catch (err) {
-                console.warn('本地 HIBOR 數據讀取失敗，使用預設 3.00%:', err);
-                statusEl.innerText = '未找到本地 hibor.json，維持預設 3.00%';
-                statusEl.style.color = '#5E6C84';
+                return 2.66; // 預設安全值
             }
         }
 
@@ -1194,6 +1189,7 @@
         function showAnnualInterestDetails() {
             var isHKD = currentCalcCtx.isHKD;
             var hedgeUSD = currentCalcCtx.hedgeUSD;
+            var loanUSD = currentCalcCtx.loanUSD;
             var interestRate = currentCalcCtx.interestRate;
             var standardInterestUSD = currentCalcCtx.standardInterestUSD;
             var hedgeInterestUSD = currentCalcCtx.hedgeInterestUSD;
@@ -1408,7 +1404,6 @@
             document.getElementById('valLoanSub').innerHTML = isHKD ? '(' + formatCurrencyWithUnit(loanUSD, false) + ')' : '(' + formatCurrencyWithUnit(loanUSD, true) + ')';
             document.getElementById('valDiscount').innerHTML = formatCurrencyWithUnit(discountUSD, isHKD);
             document.getElementById('valDiscountPct').innerHTML = '折扣率: ' + (discountRate * 100).toFixed(1) + '%';
-            
             document.getElementById('valPrincipal').innerHTML = '<span class="csv-clickable" style="color:inherit;" onclick="showPrincipalDetails()">' + formatCurrencyWithUnit(principalUSD, isHKD) + '</span>';
             document.getElementById('valInterestRate').innerHTML = interestRate.toFixed(2) + '%';
             document.getElementById('valInterestFormula').innerHTML = 'Min(' + (loanHKD < 1000000 ? 'H+1.5%' : 'H+1.35%') + ', ' + (loanHKD < 1000000 ? 'P-0.65%' : 'P-1.0%') + ')';
@@ -1450,9 +1445,13 @@
         }
 
         window.onload = function() {
+            // 初始化時套用自動取得的 HIBOR 利率
+            var autoHibor = getAutoHiborRate();
+            document.getElementById('hiborSlider').value = autoHibor;
+            document.getElementById('hiborInput').value = autoHibor.toFixed(2);
+
             initYearCheckboxes();
             loadExcelData();
-            fetchFirstWorkingDayHibor(); // 開啟網頁時自動讀取 hibor.json
 
             var currencyToggleBox = document.getElementById('currencyToggleBox');
             var currencyToggle = document.getElementById('currencyToggle');
